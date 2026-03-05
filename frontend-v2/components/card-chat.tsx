@@ -25,7 +25,7 @@ export default function CardChat({ ppn }: { ppn: string }) {
 
   // Scroll to latest message
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    // auto-scroll removed
   }, [messages]);
 
   async function send() {

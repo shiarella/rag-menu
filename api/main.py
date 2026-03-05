@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import re
+import threading
 from typing import Optional
 
 import faiss
@@ -80,6 +81,58 @@ print("Loading embedding model …")
 model = SentenceTransformer(MODEL_NAME)
 
 print(f"Ready — {len(metadata_store)} records, index size {index.ntotal}")
+
+
+# Warm up Ollama in the background so the first real request doesn't cold-start
+def _warmup_ollama():
+    import time
+
+    for _ in range(18):  # wait up to 90s for Ollama to come up
+        try:
+            httpx.get(f"{_ollama_host}/api/tags", timeout=5.0)
+            break
+        except Exception:
+            time.sleep(5)
+    try:
+        httpx.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "prompt": "hi", "stream": False},
+            timeout=120.0,
+        )
+        print("Ollama warm-up complete")
+    except Exception as exc:
+        print(f"Ollama warm-up skipped: {exc}")
+
+
+threading.Thread(target=_warmup_ollama, daemon=True).start()
+
+# Warm up Ollama so the first user request doesn't cold-start
+import threading
+
+
+def _warmup_ollama():
+    import time, urllib.request
+
+    for _ in range(12):  # wait up to 60s for Ollama to be reachable
+        try:
+            urllib.request.urlopen(f"{_ollama_host}/api/tags", timeout=5)
+            break
+        except Exception:
+            time.sleep(5)
+    try:
+        import httpx as _httpx
+
+        _httpx.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "prompt": "hi", "stream": False},
+            timeout=120.0,
+        )
+        print("Ollama warm-up complete")
+    except Exception as e:
+        print(f"Ollama warm-up skipped: {e}")
+
+
+threading.Thread(target=_warmup_ollama, daemon=True).start()
 
 
 # ── Facet pre-computation ─────────────────────────────────────────────────────
@@ -366,7 +419,7 @@ async def generate(req: GenerateRequest):
     )
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=180.0) as client:
             response = await client.post(
                 OLLAMA_URL,
                 json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
@@ -428,7 +481,7 @@ async def chat(req: ChatRequest):
     ]
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=180.0) as client:
             response = await client.post(
                 f"{_ollama_host}/api/chat",
                 json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
@@ -449,35 +502,31 @@ async def chat(req: ChatRequest):
 @app.post("/parse")
 async def parse_query(req: ParseRequest):
     """
-    Query decomposition: extracts structured metadata filters (place, year) from
-    a natural-language query, passes the semantic query through mostly unchanged,
-    and adds a caveat if the query asks for something the catalogue cannot answer.
+    Query decomposition: rewrites the query into a clean semantic search string
+    and optionally adds a caveat. Does NOT extract place/year — those are
+    user-controlled facet filters only.
     """
     prompt = (
-        "You parse natural language queries into structured search parameters for a catalogue "
+        "You rewrite natural language queries into clean semantic search strings for a catalogue "
         "of 2,403 historical menu cards (Staatsbibliothek zu Berlin, mostly 1880–1913).\n\n"
-        "Every record in this catalogue IS a menu card — so phrases like 'show me menus', "
-        "'find menus with', 'menus about', 'I want to see', 'search for' are pure boilerplate "
-        "and must be removed from the semantic_query.\n\n"
-        "Catalogue fields: title, place (city/ship/hotel/institution), date. "
-        "IMPORTANT: the catalogue does NOT contain menu text or dish names — "
-        "only physical descriptions of the card objects.\n\n"
+        "Remove boilerplate phrases like 'show me menus', 'find menus with', 'I want to see', "
+        "'search for' — keep only the meaningful content words.\n\n"
         "Respond with JSON only. No markdown, no explanation.\n\n"
-        "RULE — place must be a PROPER NOUN (city, named ship, named hotel, named institution). "
-        "Generic words like 'ship', 'boat', 'hotel', 'restaurant' are NOT place values.\n\n"
+        "If the query is asking for specific dish names or food content (not titles/occasions), "
+        "add a caveat suggesting the user enable OCR mode.\n\n"
         "Examples:\n"
         'Input: "show me menus with ships and boats"\n'
-        'Output: {"semantic_query": "ships and boats", "place": null, "year_from": null, "year_to": null, "caveat": null}\n\n'
+        'Output: {"semantic_query": "ships and boats", "caveat": null}\n\n'
         'Input: "elegant dinner on a ship"\n'
-        'Output: {"semantic_query": "elegant dinner ship", "place": null, "year_from": null, "year_to": null, "caveat": null}\n\n'
-        'Input: "elegant dinner at a Berlin hotel in the 1890s"\n'
-        'Output: {"semantic_query": "elegant dinner hotel", "place": "Berlin", "year_from": 1890, "year_to": 1899, "caveat": null}\n\n'
+        'Output: {"semantic_query": "elegant dinner ship", "caveat": null}\n\n'
+        'Input: "French dinner on a boat with seabass"\n'
+        'Output: {"semantic_query": "French dinner boat seabass", "caveat": null}\n\n'
         'Input: "find me vegetarian dishes on the menu"\n'
-        'Output: {"semantic_query": "vegetarian", "place": null, "year_from": null, "year_to": null, "caveat": "Tip: switch the search index to OCR or Both in Advanced settings — OCR text from card images may contain dish names."}\n\n'
-        'Input: "menus with Polish food"\n'
-        'Output: {"semantic_query": "Polish food", "place": null, "year_from": null, "year_to": null, "caveat": "Tip: switch the search index to OCR or Both in Advanced settings — OCR text from card images may contain dish and cuisine names."}\n\n'
+        'Output: {"semantic_query": "vegetarian", "caveat": "Tip: switch the search index to OCR or Both in Advanced settings — OCR text from card images may contain dish names."}\n\n'
+        'Input: "menus with Polish food in Berlin in the 1890s"\n'
+        'Output: {"semantic_query": "Polish food Berlin 1890s", "caveat": "Tip: switch the search index to OCR or Both in Advanced settings — OCR text from card images may contain dish and cuisine names."}\n\n'
         'Input: "Hohenzollern yacht imperial dinner"\n'
-        'Output: {"semantic_query": "Hohenzollern yacht imperial dinner", "place": null, "year_from": null, "year_to": null, "caveat": null}\n\n'
+        'Output: {"semantic_query": "Hohenzollern yacht imperial dinner", "caveat": null}\n\n'
         f'Input: "{req.query}"\n'
         "Output:"
     )
@@ -506,9 +555,9 @@ async def parse_query(req: ParseRequest):
         parsed = json.loads(raw)
         return {
             "semantic_query": parsed.get("semantic_query") or req.query,
-            "place": parsed.get("place") or None,
-            "year_from": parsed.get("year_from") or None,
-            "year_to": parsed.get("year_to") or None,
+            "place": None,
+            "year_from": None,
+            "year_to": None,
             "caveat": parsed.get("caveat") or None,
         }
 

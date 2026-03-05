@@ -131,18 +131,6 @@ export default function Home() {
         const pd = await pr.json();
         searchQuery = pd.semantic_query || query;
         if (pd.semantic_query) setParsedQuery(pd.semantic_query);
-        if (pd.place) {
-          parsedPlace = pd.place;
-          setPlace(pd.place);
-        }
-        if (pd.year_from) {
-          parsedYearFrom = String(pd.year_from);
-          setYearFrom(String(pd.year_from));
-        }
-        if (pd.year_to) {
-          parsedYearTo = String(pd.year_to);
-          setYearTo(String(pd.year_to));
-        }
         if (pd.caveat) setCaveat(pd.caveat);
       } catch {
         // parse failed — fall through with original query
@@ -619,7 +607,7 @@ export default function Home() {
 
         {/* Empty state — before any search */}
         {!loading && !hasSearched && allResults.length === 0 && !error && (
-          <p className="text-sm text-muted-foreground py-4">
+          <p className="text-sm text-muted-foreground py-4 text-center w-full">
             Enter a query above to search the collection.
           </p>
         )}
@@ -728,7 +716,11 @@ export default function Home() {
                   <div className="relative aspect-3/4 bg-muted">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={card.local_image_url.startsWith("http") ? card.local_image_url : `${API}${card.local_image_url}`}
+                      src={
+                        card.local_image_url.startsWith("http")
+                          ? card.local_image_url
+                          : `${API}${card.local_image_url}`
+                      }
                       alt={card.subtitle || "Menu card"}
                       className="w-full h-full object-cover"
                       onError={(e) => {
