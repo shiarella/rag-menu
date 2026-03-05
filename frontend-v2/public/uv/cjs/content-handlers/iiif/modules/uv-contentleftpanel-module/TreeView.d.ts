@@ -1,0 +1,24 @@
+import { BaseView } from "../uv-shared-module/BaseView";
+import { TreeNode } from "manifesto.js";
+import { ContentLeftPanel } from "./ContentLeftPanel";
+export declare class TreeView extends BaseView<ContentLeftPanel> {
+    isOpen: boolean;
+    treeComponent: any;
+    treeData: any;
+    $tree: JQuery;
+    private expandedNodeIds;
+    constructor($element: JQuery, fitToParentWidth?: boolean, fitToParentHeight?: boolean);
+    create(): void;
+    setup(): void;
+    private saveState;
+    private restoreState;
+    databind(): void;
+    show(): void;
+    hide(): void;
+    selectNode(node: TreeNode): void;
+    expandNode(node: TreeNode, expanded: boolean): void;
+    getAllNodes(): TreeNode[];
+    deselectCurrentNode(): void;
+    getNodeById(id: string): TreeNode;
+    resize(): void;
+}

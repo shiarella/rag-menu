@@ -1,0 +1,34 @@
+import { AlephCenterPanel } from "../../modules/uv-alephcenterpanel-module/AlephCenterPanel";
+import { BaseExtension } from "../../modules/uv-shared-module/BaseExtension";
+import { DownloadDialogue } from "./DownloadDialogue";
+import { FooterPanel } from "../../modules/uv-shared-module/FooterPanel";
+import { FooterPanel as MobileFooterPanel } from "../../modules/uv-avmobilefooterpanel-module/MobileFooter";
+import { HeaderPanel } from "../../modules/uv-shared-module/HeaderPanel";
+import { IAlephExtension } from "./IAlephExtension";
+import { MoreInfoRightPanel } from "../../modules/uv-moreinforightpanel-module/MoreInfoRightPanel";
+import { SettingsDialogue } from "./SettingsDialogue";
+import { ShareDialogue } from "./ShareDialogue";
+import { AlephLeftPanel } from "../../modules/uv-alephleftpanel-module/AlephLeftPanel";
+import "./theme/theme.less";
+import { Config } from "./config/Config";
+export default class Extension extends BaseExtension<Config> implements IAlephExtension {
+    $downloadDialogue: JQuery;
+    $multiSelectDialogue: JQuery;
+    $settingsDialogue: JQuery;
+    $shareDialogue: JQuery;
+    centerPanel: AlephCenterPanel;
+    downloadDialogue: DownloadDialogue;
+    footerPanel: FooterPanel<Config["modules"]["footerPanel"]>;
+    headerPanel: HeaderPanel<Config["modules"]["headerPanel"]>;
+    leftPanel: AlephLeftPanel;
+    mobileFooterPanel: MobileFooterPanel;
+    rightPanel: MoreInfoRightPanel;
+    settingsDialogue: SettingsDialogue;
+    shareDialogue: ShareDialogue;
+    defaultConfig: Config;
+    create(): void;
+    createModules(): Promise<void>;
+    render(): void;
+    isLeftPanelEnabled(): boolean;
+    getEmbedScript(template: string, width: number, height: number): string;
+}

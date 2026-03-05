@@ -117,6 +117,25 @@ def get_facets():
     }
 
 
+@app.get("/card/{ppn}")
+def get_card(ppn: str):
+    """Return the full metadata record for a single card by PPN."""
+    for r in metadata_store:
+        if r["ppn"] == ppn:
+            item = r.copy()
+            item["local_image_url"] = (
+                f"/images/{ppn}/00000001.jpg"
+                if USE_LOCAL_IMAGES
+                else r["iiif_image_url"]
+            )
+            item.setdefault(
+                "iiif_manifest_url",
+                f"https://content.staatsbibliothek-berlin.de/dc/{ppn}/manifest",
+            )
+            return item
+    raise HTTPException(status_code=404, detail=f"Card {ppn!r} not found")
+
+
 @app.post("/search")
 def search(req: SearchRequest):
     """
@@ -142,6 +161,11 @@ def search(req: SearchRequest):
             f"/images/{item['ppn']}/00000001.jpg"
             if USE_LOCAL_IMAGES
             else item["iiif_image_url"]
+        )
+        # Always include the manifest URL so the detail page can open the IIIF viewer
+        item.setdefault(
+            "iiif_manifest_url",
+            f"https://content.staatsbibliothek-berlin.de/dc/{item['ppn']}/manifest",
         )
         return item
 

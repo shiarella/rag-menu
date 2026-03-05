@@ -1,0 +1,36 @@
+import { BaseExtension } from "../../modules/uv-shared-module/BaseExtension";
+import { EbookLeftPanel } from "../../modules/uv-ebookleftpanel-module/EbookLeftPanel";
+import { DownloadDialogue } from "./DownloadDialogue";
+import { EbookCenterPanel } from "../../modules/uv-ebookcenterpanel-module/EbookCenterPanel";
+import { FooterPanel } from "../../modules/uv-shared-module/FooterPanel";
+import { FooterPanel as MobileFooterPanel } from "../../modules/uv-ebookmobilefooterpanel-module/MobileFooter";
+import { HeaderPanel } from "../../modules/uv-shared-module/HeaderPanel";
+import { IEbookExtension } from "./IEbookExtension";
+import { MoreInfoRightPanel } from "../../modules/uv-moreinforightpanel-module/MoreInfoRightPanel";
+import { SettingsDialogue } from "./SettingsDialogue";
+import { ShareDialogue } from "./ShareDialogue";
+import "./theme/theme.less";
+import { Config } from "./config/Config";
+export default class Extension extends BaseExtension<Config> implements IEbookExtension {
+    $downloadDialogue: JQuery;
+    $multiSelectDialogue: JQuery;
+    $settingsDialogue: JQuery;
+    $shareDialogue: JQuery;
+    centerPanel: EbookCenterPanel;
+    downloadDialogue: DownloadDialogue;
+    footerPanel: FooterPanel<Config["modules"]["footerPanel"]>;
+    headerPanel: HeaderPanel<Config["modules"]["headerPanel"]>;
+    leftPanel: EbookLeftPanel;
+    mobileFooterPanel: MobileFooterPanel;
+    rightPanel: MoreInfoRightPanel;
+    settingsDialogue: SettingsDialogue;
+    shareDialogue: ShareDialogue;
+    cfiFragement: string;
+    defaultConfig: Config;
+    create(): void;
+    createModules(): void;
+    isLeftPanelEnabled(): boolean;
+    render(): void;
+    getEmbedScript(template: string, width: number, height: number): string;
+    checkForCFIParam(): void;
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import Link from "next/link";
 import {
   Search,
   ChevronDown,
@@ -385,9 +386,12 @@ export default function Home() {
             {/* Card grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               {pageResults.map((card, i) => (
-                <div
+                <Link
                   key={card.ppn}
-                  className="rounded-xl border border-border bg-card overflow-hidden hover:shadow-md transition-shadow flex flex-col"
+                  href={`/card/${card.ppn}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-xl border border-border bg-card overflow-hidden hover:shadow-md transition-shadow flex flex-col group"
                 >
                   <div className="relative aspect-3/4 bg-muted">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -439,7 +443,7 @@ export default function Home() {
                       </div>
                     )}
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
 

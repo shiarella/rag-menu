@@ -1,0 +1,37 @@
+import { BaseExtension } from "../../modules/uv-shared-module/BaseExtension";
+import { DownloadDialogue } from "./DownloadDialogue";
+import { FooterPanel } from "../../modules/uv-shared-module/FooterPanel";
+import { IPDFExtension } from "./IPDFExtension";
+import { MoreInfoRightPanel } from "../../modules/uv-moreinforightpanel-module/MoreInfoRightPanel";
+import { PDFCenterPanel } from "../../modules/uv-pdfcenterpanel-module/PDFCenterPanel";
+import { PDFHeaderPanel } from "../../modules/uv-pdfheaderpanel-module/PDFHeaderPanel";
+import { FooterPanel as MobileFooterPanel } from "../../modules/uv-pdfmobilefooterpanel-module/MobileFooter";
+import { ResourcesLeftPanel } from "../../modules/uv-resourcesleftpanel-module/ResourcesLeftPanel";
+import { SettingsDialogue } from "./SettingsDialogue";
+import { ShareDialogue } from "./ShareDialogue";
+import "./theme/theme.less";
+import { Config } from "./config/Config";
+export default class Extension extends BaseExtension<Config> implements IPDFExtension {
+    $downloadDialogue: JQuery;
+    $shareDialogue: JQuery;
+    $helpDialogue: JQuery;
+    $settingsDialogue: JQuery;
+    centerPanel: PDFCenterPanel;
+    downloadDialogue: DownloadDialogue;
+    shareDialogue: ShareDialogue;
+    footerPanel: FooterPanel<Config["modules"]["footerPanel"]>;
+    mobileFooterPanel: MobileFooterPanel;
+    headerPanel: PDFHeaderPanel;
+    leftPanel: ResourcesLeftPanel;
+    rightPanel: MoreInfoRightPanel;
+    settingsDialogue: SettingsDialogue;
+    defaultConfig: Config;
+    create(): void;
+    render(): void;
+    isHeaderPanelEnabled(): boolean;
+    createModules(): void;
+    bookmark(): void;
+    dependencyLoaded(index: number, dep: any): void;
+    getEmbedScript(template: string, width: number, height: number): string;
+    isPdfJsEnabled(): boolean;
+}

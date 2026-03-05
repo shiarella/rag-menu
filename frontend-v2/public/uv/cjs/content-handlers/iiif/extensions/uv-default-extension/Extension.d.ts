@@ -1,0 +1,32 @@
+import { BaseExtension } from "../../modules/uv-shared-module/BaseExtension";
+import { FileLinkCenterPanel } from "../../modules/uv-filelinkcenterpanel-module/FileLinkCenterPanel";
+import { FooterPanel } from "../../modules/uv-shared-module/FooterPanel";
+import { HeaderPanel } from "../../modules/uv-shared-module/HeaderPanel";
+import { HelpDialogue } from "../../modules/uv-dialogues-module/HelpDialogue";
+import { IDefaultExtension } from "./IDefaultExtension";
+import { MoreInfoRightPanel } from "../../modules/uv-moreinforightpanel-module/MoreInfoRightPanel";
+import { ResourcesLeftPanel } from "../../modules/uv-resourcesleftpanel-module/ResourcesLeftPanel";
+import { SettingsDialogue } from "./SettingsDialogue";
+import { ShareDialogue } from "./ShareDialogue";
+import "./theme/theme.less";
+import { Config } from "./config/Config";
+export default class Extension extends BaseExtension<Config> implements IDefaultExtension {
+    $downloadDialogue: JQuery;
+    $shareDialogue: JQuery;
+    $helpDialogue: JQuery;
+    $settingsDialogue: JQuery;
+    centerPanel: FileLinkCenterPanel;
+    shareDialogue: ShareDialogue;
+    footerPanel: FooterPanel<Config["modules"]["footerPanel"]>;
+    headerPanel: HeaderPanel<Config["modules"]["headerPanel"]>;
+    helpDialogue: HelpDialogue;
+    leftPanel: ResourcesLeftPanel;
+    rightPanel: MoreInfoRightPanel;
+    settingsDialogue: SettingsDialogue;
+    defaultConfig: Config;
+    create(): void;
+    createModules(): void;
+    render(): void;
+    isLeftPanelEnabled(): boolean;
+    getEmbedScript(template: string, width: number, height: number): string;
+}
