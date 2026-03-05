@@ -48,6 +48,10 @@ export default function Home() {
   // true when filters changed after last search — prompts user to re-search
   const [filtersDirty, setFiltersDirty] = useState(false);
 
+  // Archivist (AI interpretation)
+  const [answer, setAnswer] = useState("");
+  const [generating, setGenerating] = useState(false);
+
   const hasFilters = place || yearFrom || yearTo;
   const isFacetOnly = !query.trim();
 
@@ -66,6 +70,7 @@ export default function Home() {
     setAllResults([]);
     setPage(1);
     setFiltersDirty(false);
+    setAnswer("");
 
     try {
       const body: Record<string, unknown> = { query };
@@ -100,6 +105,43 @@ export default function Home() {
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     runSearch();
+  }
+
+  async function handleGenerate(scope: "page") {
+    const toSend = scope === "page" ? pageResults : filtered;
+    if (!toSend.length) return;
+    setGenerating(true);
+    setAnswer("");
+    // For facet-only browses there's no query; synthesise one from active filters
+    const effectiveQuery =
+      query.trim() ||
+      [
+        place && `place: ${place}`,
+        yearFrom && `from ${yearFrom}`,
+        yearTo && `to ${yearTo}`,
+      ]
+        .filter(Boolean)
+        .join(", ");
+    try {
+      const res = await fetch(`${API}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: effectiveQuery,
+          results: toSend,
+          start_index: (page - 1) * PAGE_SIZE + 1,
+          page,
+          total_pages: totalPages,
+          total_results: filtered.length,
+        }),
+      });
+      const data = await res.json();
+      setAnswer(data.answer);
+    } catch {
+      setAnswer("Generation failed — is Ollama running?");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   // Client-side relevance filter + pagination — no extra fetch needed
@@ -305,12 +347,45 @@ export default function Home() {
               </p>
             </div>
 
+            {/* Archivist — interpret this page */}
+            <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium">Ask the archivist</p>
+                  <p className="text-xs text-muted-foreground">
+                    AI summary of the {pageResults.length} cards on this page
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleGenerate("page")}
+                  disabled={generating}
+                  className="shrink-0"
+                >
+                  {generating ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      Thinking…
+                    </>
+                  ) : (
+                    "Interpret this page"
+                  )}
+                </Button>
+              </div>
+              {answer && (
+                <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap border-t border-border pt-3">
+                  {answer}
+                </p>
+              )}
+            </div>
+
             {/* Card grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {pageResults.map((card) => (
+              {pageResults.map((card, i) => (
                 <div
                   key={card.ppn}
-                  className="rounded-xl border border-border bg-card overflow-hidden hover:shadow-md transition-shadow"
+                  className="rounded-xl border border-border bg-card overflow-hidden hover:shadow-md transition-shadow flex flex-col"
                 >
                   <div className="relative aspect-3/4 bg-muted">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -323,26 +398,43 @@ export default function Home() {
                           card.iiif_image_url;
                       }}
                     />
-                    {card.score > 0 && (
-                      <span className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full tabular-nums">
-                        {(card.score * 100).toFixed(0)}%
-                      </span>
-                    )}
+                    {/* Position number — top-left */}
+                    <span className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full tabular-nums font-medium">
+                      {(page - 1) * PAGE_SIZE + i + 1}
+                    </span>
                   </div>
-                  <div className="p-3 space-y-1">
-                    {card.subtitle && (
-                      <p className="font-medium text-sm leading-tight line-clamp-2">
-                        {card.subtitle}
-                      </p>
-                    )}
-                    <div className="flex gap-2 text-xs text-muted-foreground flex-wrap">
-                      {card.date && <span>{card.date}</span>}
-                      {card.place && <span>{card.place}</span>}
+                  <div className="p-3 flex flex-col flex-1 space-y-1.5">
+                    <div className="flex-1 space-y-1.5">
+                      {card.subtitle && (
+                        <p className="font-medium text-sm leading-tight line-clamp-2">
+                          {card.subtitle}
+                        </p>
+                      )}
+                      <div className="flex gap-2 text-xs text-muted-foreground flex-wrap">
+                        {card.date && <span>{card.date}</span>}
+                        {card.place && <span>{card.place}</span>}
+                      </div>
+                      {card.description && (
+                        <p className="text-xs text-muted-foreground line-clamp-3">
+                          {card.description}
+                        </p>
+                      )}
                     </div>
-                    {card.description && (
-                      <p className="text-xs text-muted-foreground line-clamp-3">
-                        {card.description}
-                      </p>
+                    {/* Relevance bar — always at card bottom, only for semantic searches */}
+                    {card.score > 0 && (
+                      <div className="pt-1.5 space-y-0.5">
+                        <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-primary/60"
+                            style={{
+                              width: `${(card.score * 100).toFixed(0)}%`,
+                            }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-muted-foreground/60 tabular-nums">
+                          {(card.score * 100).toFixed(0)}% match
+                        </p>
+                      </div>
                     )}
                   </div>
                 </div>

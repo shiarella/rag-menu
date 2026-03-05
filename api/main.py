@@ -98,6 +98,12 @@ class SearchRequest(BaseModel):
 class GenerateRequest(BaseModel):
     query: str
     results: list[dict]  # pass the /search results directly
+    start_index: int = (
+        1  # global card number of the first result (for correct [N] references)
+    )
+    page: int = 1
+    total_pages: int = 1
+    total_results: int = 0
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -199,7 +205,7 @@ async def generate(req: GenerateRequest):
     # Build context block with explicit field labels so the LLM cannot
     # mistake the Place/issuer field for part of the description.
     context_lines = []
-    for i, r in enumerate(req.results, 1):
+    for i, r in enumerate(req.results, req.start_index):
         lines = [f"[{i}]"]
         if r.get("subtitle"):
             lines.append(f"  Title:       {r['subtitle']}")
@@ -223,17 +229,30 @@ async def generate(req: GenerateRequest):
         "  Place       — the city, ship company, hotel, or institution that issued the card\n"
         "  Description — physical description and content of the card\n\n"
         'A researcher has asked: "{query}"\n\n'
+        "You are viewing page {page} of {total_pages} of the search results "
+        "({start_index}–{end_index} of {total_results} matching records).\n\n"
         "Based on these catalogue records from the collection:\n\n"
         "{context}\n\n"
         "Instructions:\n"
         "- Provide a helpful, concise answer in English.\n"
         "- Reference specific cards by their number [1], [2] etc. where relevant.\n"
+        "- Treat every card as a distinct item — do not say one card 'repeats' or 'is the same as' another, even if they look similar.\n"
         "- If the researcher asks about a location, check the Place field of every record carefully.\n"
-        "- The records shown ARE the matching results — describe what they contain. Do not say there are no matches.\n"
+        "- These records were selected and ranked by semantic similarity — trust the ranking. Do not say a record 'does not match'; instead describe what it contains and how it relates to the query.\n"
+        "- Cover all the records shown, not just a few you judge to be strong matches.\n"
         "- Do NOT apply any date range filter of your own — report the dates as they appear in the records.\n"
         "- Do NOT suggest external archives, other collections, or resources outside this catalogue.\n"
-        "- If the records are weak matches or do not answer the question, say so briefly and stop."
-    ).format(query=req.query, context=context)
+        "- Do NOT refer to cards from previous pages that are not in the context above.\n"
+        "- Do not end with a summary sentence dismissing the remaining records."
+    ).format(
+        query=req.query,
+        context=context,
+        page=req.page,
+        total_pages=req.total_pages,
+        start_index=req.start_index,
+        end_index=req.start_index + len(req.results) - 1,
+        total_results=req.total_results,
+    )
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
