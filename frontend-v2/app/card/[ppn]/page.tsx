@@ -4,7 +4,7 @@ import { ChevronLeft, FileJson } from "lucide-react";
 import IIIFViewer from "@/components/iiif-viewer";
 import CardChat from "@/components/card-chat";
 
-const API = "http://localhost:8000";
+const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
 
 interface CardRecord {
   ppn: string;

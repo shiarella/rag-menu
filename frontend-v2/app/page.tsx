@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 
-const API = "http://localhost:8000";
+const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
 const PAGE_SIZE = 12;
 
 /** Hover tooltip — works reliably where SVG `title` attributes don't. */

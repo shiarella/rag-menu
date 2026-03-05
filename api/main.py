@@ -11,6 +11,7 @@ Run:
 """
 
 import json
+import os
 import pathlib
 import re
 from typing import Optional
@@ -32,17 +33,16 @@ INDEX_OCR_PATH = ROOT / "data" / "index_ocr.faiss"
 STORE_OCR_PATH = ROOT / "data" / "metadata_store_ocr.json"
 IMAGES_PATH = ROOT / "data" / "MenuCardsDataset"
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.2"
+# In Docker, Ollama runs as a sidecar container named "ollama".
+# Locally it's on localhost. Override via OLLAMA_HOST env var.
+_ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_URL = f"{_ollama_host}/api/generate"
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
 MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
-# Minimum cosine similarity to include a result (0–1 scale)
-# Below this the card is likely noise, not a real match.
-# No server-side score threshold — the frontend lets users filter by relevance themselves.
-
-# Set to True to serve images from the local MenuCardsDataset folder (fast, no network).
-# Set to False to use IIIF URLs from the SBB server (no local data needed — good for deployment).
-USE_LOCAL_IMAGES = True
+# USE_LOCAL_IMAGES=true  → serve from local MenuCardsDataset/ (dev / if data volume mounted)
+# USE_LOCAL_IMAGES=false → proxy to SBB IIIF server (recommended for deployment)
+USE_LOCAL_IMAGES = os.environ.get("USE_LOCAL_IMAGES", "true").lower() == "true"
 
 # ── Startup: load index + metadata ────────────────────────────────────────────
 print("Loading FAISS index (v1) …")
@@ -403,7 +403,7 @@ async def chat(req: ChatRequest):
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                "http://localhost:11434/api/chat",
+                f"{_ollama_host}/api/chat",
                 json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
             )
             response.raise_for_status()

@@ -1,0 +1,59 @@
+services:
+  # ── Ollama (LLM inference) ────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag_ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama # model weights persist across restarts
+    # No port exposure — only the api container needs to reach Ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ── FastAPI backend ───────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: rag_api
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data:ro # indexes + metadata (read-only at runtime)
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      USE_LOCAL_IMAGES: "false" # serve images from SBB IIIF — no local data needed
+      OLLAMA_MODEL: llama3.2
+    # Only exposed internally; Next.js rewrites proxy to it
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/facets"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Next.js frontend ──────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        NEXT_PUBLIC_API: /api # browser calls /api/* → Next.js rewrite → api container
+    container_name: rag_web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_INTERNAL_URL: http://api:8000
+    ports:
+      - "80:3000" # public HTTP; put nginx/Caddy in front for HTTPS
+
+volumes:
+  ollama_data:

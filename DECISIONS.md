@@ -95,12 +95,37 @@ Ran 8 test queries against the live API (`eval_search.py`) to assess FAISS retri
 - German + Fraktur (`deu+frk`) language pack needed; plain `deu` misses Fraktur glyphs
 - Average ~1s/card across the mix
 
-**v2 architecture:**
+**OCR precompute results (run 5 March 2026):**
+
+| Metric                  | Value                 |
+| ----------------------- | --------------------- |
+| Total cards             | 2,303                 |
+| Useful text (>20 chars) | 2,039 (88.5%)         |
+| Empty / garbled         | 264 (11.5%)           |
+| Missing images          | 0                     |
+| Wall-clock time         | 39.4 min              |
+| Output                  | `data/ocr_store.json` |
+
+Empty/garbled cards are predominantly ornate royal or commemorative menus where decorative typography defeats Tesseract. These cards still appear in search via the metadata index.
+
+**Index architecture (revised — late fusion):**
 
 - `build_ocr.py` → `data/ocr_store.json` (ppn → raw OCR text, checkpointed every 50 cards)
-- `build_index_v2.py` → embeds `subtitle + place + description + ocr_text` → `data/index_v2.faiss`
-- API: `version` field in `/search` request selects v1 or v2 index
-- Frontend: toggle between v1 (metadata only) and v2 (metadata + OCR) for direct comparison in demo
+- `build_index_v2.py` → embeds **OCR text only** (not concatenated) → `data/index_ocr.faiss` + `data/metadata_store_ocr.json` (only cards with ≥30 chars OCR)
+
+**OCR index build results (run 5 March 2026):**
+
+| Metric                               | Value                     |
+| ------------------------------------ | ------------------------- | ------------------------------ |
+| Cards embedded                       | 2,070 / 2,403 (86%)       |
+| Skipped (OCR < 30 chars)             | 333                       |
+| Embedding time                       | ~6 s (batch_size=64, CPU) |
+| Vector dimensions                    | 384                       |
+| Output index                         | `data/index_ocr.faiss`    |
+| - API: `search_mode` field (`"meta"` | `"ocr"`                   | `"both"`) in `/search` request |
+
+- `"both"` = late fusion: query each index independently, merge by `max(meta_score, ocr_score)`
+- Frontend: multi-select checkboxes (Metadata / OCR); CLIP and Vision LLM shown as coming-soon
 
 **Why keep v1:** Direct A/B comparison is the most compelling demo of what OCR enrichment adds. Showing the same query returning different results with/without OCR text makes the improvement concrete and tangible for a presentation audience.
 

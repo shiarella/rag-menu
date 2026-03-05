@@ -1,0 +1,20 @@
+# Git — never commit large data or build artifacts
+data/
+*.faiss
+*.pt
+*.bin
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Next.js
+frontend-v2/.next/
+frontend-v2/node_modules/
+frontend-v2/out/
+
+# Legacy frontend
+frontend/
+
+# macOS
+.DS_Store
