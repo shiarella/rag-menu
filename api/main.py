@@ -106,6 +106,16 @@ class GenerateRequest(BaseModel):
     total_results: int = 0
 
 
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
+class ChatRequest(BaseModel):
+    ppn: str
+    messages: list[ChatMessage]
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @app.get("/facets")
 def get_facets():
@@ -251,7 +261,11 @@ async def generate(req: GenerateRequest):
         "  Title       — the short title of the card\n"
         "  Date        — year or date range\n"
         "  Place       — the city, ship company, hotel, or institution that issued the card\n"
-        "  Description — physical description and content of the card\n\n"
+        "  Description — a librarian's PHYSICAL description of the card object (paper, printing, size, condition). "
+        "It does NOT contain a transcription of the menu text itself.\n\n"
+        "CRITICAL: The Description field describes the physical card, not the food on the menu. "
+        "Do NOT invent, infer, or guess specific dishes, ingredients, or cuisines that are not explicitly stated in the fields above. "
+        "Only report what is literally written in the catalogue record.\n\n"
         'A researcher has asked: "{query}"\n\n'
         "You are viewing page {page} of {total_pages} of the search results "
         "({start_index}–{end_index} of {total_results} matching records).\n\n"
@@ -261,6 +275,8 @@ async def generate(req: GenerateRequest):
         "- Provide a helpful, concise answer in English.\n"
         "- Reference specific cards by their number [1], [2] etc. where relevant.\n"
         "- Treat every card as a distinct item — do not say one card 'repeats' or 'is the same as' another, even if they look similar.\n"
+        "- Only describe what is explicitly written in the catalogue fields. Do NOT invent dish names, ingredients, or cuisine types that are not literally present in the record.\n"
+        "- If a query asks about specific food content (e.g. dishes on the menu) that is not in the Description field, say that the catalogue records describe the physical cards only and do not transcribe the menu text.\n"
         "- If the researcher asks about a location, check the Place field of every record carefully.\n"
         "- These records were selected and ranked by semantic similarity — trust the ranking. Do not say a record 'does not match'; instead describe what it contains and how it relates to the query.\n"
         "- Cover all the records shown, not just a few you judge to be strong matches.\n"
@@ -295,3 +311,58 @@ async def generate(req: GenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"answer": answer, "prompt_length": len(prompt)}
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    """
+    Multi-turn chat about a single card. The full conversation history is sent
+    each turn so the model has context. Uses Ollama's /api/chat endpoint.
+    """
+    # Look up the card
+    card = next((r for r in metadata_store if r["ppn"] == req.ppn), None)
+    if not card:
+        raise HTTPException(status_code=404, detail=f"Card {req.ppn!r} not found")
+
+    # Build a system prompt grounded in this card's metadata only
+    field_lines = []
+    for label, key in [
+        ("Title", "subtitle"),
+        ("Date", "date"),
+        ("Place", "place"),
+        ("Description", "description"),
+    ]:
+        if card.get(key):
+            field_lines.append(f"  {label}: {card[key]}")
+    card_context = "\n".join(field_lines)
+
+    system = (
+        "You are a knowledgeable archivist at the Staatsbibliothek zu Berlin. "
+        "A researcher is viewing a single historical menu card from the collection. "
+        "Answer their questions using only the information in the catalogue record below. "
+        "Be concise, helpful, and stay in the role of an archivist. "
+        "If a question cannot be answered from the record, say so briefly.\n\n"
+        f"Catalogue record:\n{card_context}"
+    )
+
+    messages = [{"role": "system", "content": system}] + [
+        {"role": m.role, "content": m.content} for m in req.messages
+    ]
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                "http://localhost:11434/api/chat",
+                json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
+            )
+            response.raise_for_status()
+            reply = response.json()["message"]["content"]
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Ollama is not running. Start it with: ollama serve",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"reply": reply}

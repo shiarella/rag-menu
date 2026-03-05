@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, FileJson } from "lucide-react";
 import IIIFViewer from "@/components/iiif-viewer";
+import CardChat from "@/components/card-chat";
 
 const API = "http://localhost:8000";
 
@@ -112,6 +113,9 @@ export default async function CardPage({
                 IIIF manifest
               </a>
             </div>
+
+            {/* AI chat */}
+            <CardChat ppn={card.ppn} />
           </div>
         </div>
       </div>
