@@ -58,9 +58,54 @@ Ran 8 test queries against the live API (`eval_search.py`) to assess FAISS retri
 
 **Score distribution note:** For a poorly-matched query, `p50` (median score) is 34.3% and max is 61.2%. This confirms that even the "top" results for a food-content query are only a few points above the mid-field — the ranking carries no real signal.
 
+## Query Decomposition / Smart Parse (2026-03-05)
+
+- **`POST /parse` endpoint** — takes a natural language query, runs it through `llama3.2` at `temperature=0`, returns `{ semantic_query, place, year_from, year_to, caveat }`.
+- **Few-shot prompted** — the prompt uses 6 input/output examples rather than abstract rules. This was more reliable than rule-following instructions for `llama3.2`.
+- **semantic_query**: boilerplate stripped ("show me menus with…" → gone), but query otherwise passed through. NOT creatively rewritten — earlier attempts at "rewrite as a clean phrase" caused hallucination (gibberish → "elegant dinner").
+- **place**: only extracted if a proper noun — "ship" is not a place, "Hamburg" is. Took an explicit rule + a ship example to get this right.
+- **caveat**: LLM-authored warning, shown in an amber box in the UI. Fires for food-content queries ("specific dishes cannot be searched") and for meaningless input ("Invalid input. Please rephrase"). The phrasing is entirely LLM-generated — emergent from training data, not hardcoded.
+- **Toggle in UI** — "Smart Parse" pill switch below the search bar. Off by default so both modes can be compared. When on, shows a "searched as: …" chip with the rewritten semantic query.
+- **Parse evaluation**: tested 8 queries via `eval_parse.py`. Key results: boilerplate stripping ✅, proper-noun place extraction ✅, year decade extraction ✅, food-content caveat ✅, gibberish passthrough ✅ (falls back to original if `semantic_query` is blank).
+- **Prompt iteration history**: went through ~5 prompt versions. "Copy as-is" caused passthrough of noise. "Rewrite as clean phrase" caused hallucination. Few-shot examples with an explicit proper-noun rule was the winning approach.
+
+## Metadata Enrichment via OCR — v2 Index (2026-03-05)
+
+**Problem:** The v1 metadata-only index cannot answer food-content queries ("vegetarian menu", "Polish food") because catalogue descriptions are physical object descriptions, not menu text transcriptions.
+
+**Decision:** Build a v2 FAISS index that concatenates original metadata fields with Tesseract OCR text extracted from the card images.
+
+**Why Tesseract not llama3.2-vision:**
+
+- Tesseract: ~1s/card → full collection in ~40 min, free, local
+- llama3.2-vision: ~10–30s/card → 7–20 hours for full collection, impractical for precompute
+- Vision model adds value for layout, decoration, handwriting — but text extraction speed matters here
+
+**Why brew install not pip install:**
+
+- Tesseract is a C++ binary with language data files (~500MB). It cannot be pip-installed.
+- `pytesseract` (pip) is a thin Python wrapper that shells out to the system binary.
+- `brew install tesseract tesseract-lang` installs the engine; pip installs the Python bridge.
+
+**OCR quality findings (5-card sample):**
+
+- ~40–60% of cards will yield useful text (dish names, headings, prices readable)
+- Ornate decorative cards / cards with only a printer credit = near-zero yield
+- Handwritten cards = garbled output
+- German + Fraktur (`deu+frk`) language pack needed; plain `deu` misses Fraktur glyphs
+- Average ~1s/card across the mix
+
+**v2 architecture:**
+
+- `build_ocr.py` → `data/ocr_store.json` (ppn → raw OCR text, checkpointed every 50 cards)
+- `build_index_v2.py` → embeds `subtitle + place + description + ocr_text` → `data/index_v2.faiss`
+- API: `version` field in `/search` request selects v1 or v2 index
+- Frontend: toggle between v1 (metadata only) and v2 (metadata + OCR) for direct comparison in demo
+
+**Why keep v1:** Direct A/B comparison is the most compelling demo of what OCR enrichment adds. Showing the same query returning different results with/without OCR text makes the improvement concrete and tangible for a presentation audience.
+
 ## Pending / Future Work
 
-- **Smart Parse / query decomposition**: Pass natural language query to LLM first → extract `{ semantic_query, place, year_from, year_to, caveat }` → run search with structured params. Would reduce irrelevant high-scoring results and surface explicit limitations (e.g. "this query asks about food content not available in the metadata"). Keep as a toggle so both modes can be demoed side by side.
 - **RAG-augmented chat (Option 3)**: When user asks a question in the per-card chat, also run a FAISS search with that question and include top 3–4 related cards as context. Enables answers like "there are 4 similar cards from Hamburg in this period."
 - **Pre-aggregated stats (Option 4)**: Pass a small stats block to the chat: "47 other cards share this place, 12 share this date." Cheap, factual, no hallucination risk.
 - **D3 visualisation**: Timeline / map of the collection using React state + D3 as a utility (Amelia Wattenberger approach — no D3 DOM manipulation, just scales and layouts).

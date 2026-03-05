@@ -28,6 +28,8 @@ from sentence_transformers import SentenceTransformer
 ROOT = pathlib.Path(__file__).parent.parent
 INDEX_PATH = ROOT / "data" / "index.faiss"
 STORE_PATH = ROOT / "data" / "metadata_store.json"
+INDEX_OCR_PATH = ROOT / "data" / "index_ocr.faiss"
+STORE_OCR_PATH = ROOT / "data" / "metadata_store_ocr.json"
 IMAGES_PATH = ROOT / "data" / "MenuCardsDataset"
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -43,12 +45,26 @@ MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 USE_LOCAL_IMAGES = True
 
 # ── Startup: load index + metadata ────────────────────────────────────────────
-print("Loading FAISS index …")
+print("Loading FAISS index (v1) …")
 index = faiss.read_index(str(INDEX_PATH))
 
-print("Loading metadata store …")
+print("Loading metadata store (v1) …")
 with open(STORE_PATH, encoding="utf-8") as f:
     metadata_store: list[dict] = json.load(f)
+
+# OCR-only index — loaded if available; enables "ocr" and "both" search modes
+if INDEX_OCR_PATH.exists() and STORE_OCR_PATH.exists():
+    print("Loading FAISS index (OCR-only) …")
+    index_ocr = faiss.read_index(str(INDEX_OCR_PATH))
+    with open(STORE_OCR_PATH, encoding="utf-8") as f:
+        metadata_store_ocr: list[dict] = json.load(f)
+    print(f"OCR index ready — {len(metadata_store_ocr)} records")
+else:
+    index_ocr = None
+    metadata_store_ocr = []
+    print(
+        "OCR index not found — run build_index_v2.py to enable 'ocr' and 'both' modes"
+    )
 
 print("Loading embedding model …")
 model = SentenceTransformer(MODEL_NAME)
@@ -93,6 +109,7 @@ class SearchRequest(BaseModel):
     place: Optional[str] = None  # substring match, case-insensitive
     year_from: Optional[int] = None  # inclusive
     year_to: Optional[int] = None  # inclusive
+    search_mode: str = "meta"  # "meta" | "ocr" | "both"
 
 
 class GenerateRequest(BaseModel):
@@ -167,6 +184,11 @@ def search(req: SearchRequest):
             status_code=400, detail="Provide a search query or at least one filter."
         )
 
+    # Normalise mode: fall back gracefully if OCR index isn't built yet
+    mode = req.search_mode
+    if mode in ("ocr", "both") and index_ocr is None:
+        mode = "meta"  # silent fallback
+
     def _make_item(r: dict, score: float) -> dict:
         item = r.copy()
         item["score"] = score
@@ -175,38 +197,61 @@ def search(req: SearchRequest):
             if USE_LOCAL_IMAGES
             else item["iiif_image_url"]
         )
-        # Always include the manifest URL so the detail page can open the IIIF viewer
         item.setdefault(
             "iiif_manifest_url",
             f"https://content.staatsbibliothek-berlin.de/dc/{item['ppn']}/manifest",
         )
         return item
 
-    # ── Facet-only path (no query) ────────────────────────────────────────────
-    if not has_query:
-        results = [_make_item(r, 0.0) for r in metadata_store]
-
-    # ── Semantic search path ──────────────────────────────────────────────────
-    else:
-        # 1. Embed query
+    def _faiss_scores(idx, store) -> dict[str, float]:
+        """Query an index, return {ppn: score} for every result."""
         vec = model.encode(
             [req.query],
             normalize_embeddings=True,
             convert_to_numpy=True,
         ).astype(np.float32)
+        scores, indices = idx.search(vec, idx.ntotal)
+        return {
+            store[i]["ppn"]: float(s) for s, i in zip(scores[0], indices[0]) if i >= 0
+        }
 
-        # 2. FAISS: search all records — with 2,403 vectors this is instant.
-        # The frontend handles relevance filtering, so we return the full ranking.
-        scores, indices = index.search(vec, index.ntotal)
+    # ── Facet-only path (no query) ────────────────────────────────────────────
+    if not has_query:
+        results = [_make_item(r, 0.0) for r in metadata_store]
 
-        # 3. Build result list with metadata
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx < 0:
-                continue
-            results.append(_make_item(metadata_store[idx], float(score)))
+    # ── Semantic search path ──────────────────────────────────────────────────
+    elif mode == "meta":
+        scores_map = _faiss_scores(index, metadata_store)
+        ppn_to_meta = {r["ppn"]: r for r in metadata_store}
+        results = [
+            _make_item(ppn_to_meta[ppn], score)
+            for ppn, score in sorted(scores_map.items(), key=lambda x: -x[1])
+            if ppn in ppn_to_meta
+        ]
 
-    # ── Apply filters (both paths) ────────────────────────────────────────────
+    elif mode == "ocr":
+        scores_map = _faiss_scores(index_ocr, metadata_store_ocr)
+        ppn_to_meta = {r["ppn"]: r for r in metadata_store}
+        results = [
+            _make_item(ppn_to_meta[ppn], score)
+            for ppn, score in sorted(scores_map.items(), key=lambda x: -x[1])
+            if ppn in ppn_to_meta
+        ]
+
+    else:  # "both" — late fusion: max score wins
+        meta_scores = _faiss_scores(index, metadata_store)
+        ocr_scores = _faiss_scores(index_ocr, metadata_store_ocr)
+        ppn_to_meta = {r["ppn"]: r for r in metadata_store}
+        all_ppns = set(meta_scores) | set(ocr_scores)
+        fused = {
+            ppn: max(meta_scores.get(ppn, 0.0), ocr_scores.get(ppn, 0.0))
+            for ppn in all_ppns
+        }
+        results = [
+            _make_item(ppn_to_meta[ppn], score)
+            for ppn, score in sorted(fused.items(), key=lambda x: -x[1])
+            if ppn in ppn_to_meta
+        ]
     if req.place:
         needle = req.place.lower()
         results = [r for r in results if needle in r.get("place", "").lower()]
@@ -228,7 +273,7 @@ def search(req: SearchRequest):
     if not has_query:
         results.sort(key=lambda r: _extract_year(r.get("date", "")) or 0, reverse=True)
 
-    return {"results": results, "total_candidates": len(results)}
+    return {"results": results, "total_candidates": len(results), "search_mode": mode}
 
 
 @app.post("/generate")

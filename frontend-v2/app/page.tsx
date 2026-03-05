@@ -9,6 +9,8 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
+  Settings2,
+  Info,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -16,6 +18,22 @@ import { Slider } from "@/components/ui/slider";
 
 const API = "http://localhost:8000";
 const PAGE_SIZE = 12;
+
+/** Hover tooltip — works reliably where SVG `title` attributes don't. */
+function Tip({ text }: { text: string }) {
+  return (
+    <span className="relative group inline-flex items-center shrink-0">
+      <Info className="h-3 w-3 text-muted-foreground group-hover:text-foreground cursor-help transition-colors" />
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md
+                   opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-50 leading-relaxed"
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
 
 interface CardResult {
   ppn: string;
@@ -31,11 +49,12 @@ interface CardResult {
 interface SearchResponse {
   results: CardResult[];
   total_candidates: number;
+  search_mode: string;
 }
 
 export default function Home() {
   const [query, setQuery] = useState("");
-  const [showFilters, setShowFilters] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [place, setPlace] = useState("");
   const [yearFrom, setYearFrom] = useState("");
   const [yearTo, setYearTo] = useState("");
@@ -58,6 +77,17 @@ export default function Home() {
   const [caveat, setCaveat] = useState("");
   const [parsing, setParsing] = useState(false);
   const [parsedQuery, setParsedQuery] = useState(""); // what LLM rewrote the query to
+
+  // Search mode: "meta" | "ocr" | "both"
+  const [searchMode, setSearchMode] = useState<"meta" | "ocr" | "both">("meta");
+  // Reflects what mode the API actually used (may fall back to "meta" if OCR index isn't built)
+  const [activeMode, setActiveMode] = useState("meta");
+  // True once at least one search has completed (distinguishes pre-search from zero-results)
+  const [hasSearched, setHasSearched] = useState(false);
+
+  // Derived: which search_mode to send based on selected sources
+  const derivedMode: "meta" | "ocr" | "both" =
+    searchMode === "both" ? "both" : searchMode === "ocr" ? "ocr" : "meta";
 
   const hasFilters = place || yearFrom || yearTo;
   const isFacetOnly = !query.trim();
@@ -119,7 +149,10 @@ export default function Home() {
     }
 
     try {
-      const body: Record<string, unknown> = { query: searchQuery };
+      const body: Record<string, unknown> = {
+        query: searchQuery,
+        search_mode: derivedMode,
+      };
       if (parsedPlace) body.place = parsedPlace;
       if (parsedYearFrom) body.year_from = Number(parsedYearFrom);
       if (parsedYearTo) body.year_to = Number(parsedYearTo);
@@ -133,6 +166,8 @@ export default function Home() {
       if (!res.ok) throw new Error(`API error ${res.status}`);
       const data: SearchResponse = await res.json();
       setAllResults(data.results);
+      setActiveMode(data.search_mode ?? "meta");
+      setHasSearched(true);
     } catch {
       setError("Could not reach the API — is uvicorn running on port 8000?");
     } finally {
@@ -203,7 +238,7 @@ export default function Home() {
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex flex-col items-start px-4 py-12">
-      <div className="w-full max-w-2xl mx-auto space-y-4">
+      <div className="w-full max-w-2xl mx-auto space-y-6">
         <div className="space-y-1 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">
             Search the collection
@@ -214,7 +249,7 @@ export default function Home() {
           </p>
         </div>
 
-        <form onSubmit={handleSearch} className="space-y-3">
+        <form onSubmit={handleSearch} className="space-y-4">
           {/* Main search row */}
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -242,76 +277,173 @@ export default function Home() {
             </Button>
           </div>
 
-          {/* Smart Parse toggle */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={() => setSmartParse((v) => !v)}
-              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                smartParse ? "bg-primary" : "bg-input"
-              }`}
-              role="switch"
-              aria-checked={smartParse}
-            >
-              <span
-                className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                  smartParse ? "translate-x-4" : "translate-x-0"
-                }`}
-              />
-            </button>
-            <span
-              className={`text-xs font-medium transition-colors ${
-                smartParse ? "text-foreground" : "text-muted-foreground"
-              }`}
-            >
-              Smart Parse
-            </span>
-            {smartParse && (
-              <span className="text-xs text-muted-foreground">
-                — LLM rewrites your query before searching
-              </span>
-            )}
-            {parsedQuery && (
-              <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/15 px-2 py-0.5 text-xs text-primary font-medium">
-                searched as:{" "}
-                <span className="italic font-normal">{parsedQuery}</span>
-              </span>
-            )}
-          </div>
-
-          {/* Advanced filters toggle */}
+          {/* ── Advanced settings ─────────────────────────────── */}
           <div>
             <button
               type="button"
-              onClick={() => setShowFilters((v) => !v)}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              {showFilters ? (
+              <Settings2 className="h-3 w-3" />
+              <span>Advanced settings</span>
+              {(searchMode !== "meta" ||
+                smartParse ||
+                hasFilters ||
+                minScore > 0) && (
+                <span
+                  className="rounded-full bg-primary w-1.5 h-1.5 inline-block"
+                  aria-label="non-default settings active"
+                />
+              )}
+              {showAdvanced ? (
                 <ChevronUp className="h-3 w-3" />
               ) : (
                 <ChevronDown className="h-3 w-3" />
               )}
-              Narrow by place or date
-              {hasFilters && (
-                <span
-                  className="ml-1 rounded-full bg-primary w-1.5 h-1.5 inline-block"
-                  aria-label="filters active"
-                />
-              )}
             </button>
 
-            {showFilters && (
-              <div className="mt-3 rounded-lg border border-border bg-muted/40 p-4 space-y-4">
-                <p className="text-xs text-muted-foreground">
-                  These filters are sent with your search. Hit Search to apply,
-                  or Clear to reset and re-run.
-                </p>
+            {showAdvanced && (
+              <div className="mt-2 rounded-lg border border-border bg-muted/40 p-4 space-y-5">
+                {/* 1 — Search index */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium">Search index</span>
+                    <Tip text="Select one or more sources to search. Metadata uses the catalogue record. OCR uses text extracted from the card images. When both are selected, each is queried independently and results are merged by best score (late fusion)." />
+                  </div>
 
-                {/* Place */}
-                <div className="space-y-1">
-                  <label htmlFor="filter-place" className="text-xs font-medium">
-                    Place of issue
-                  </label>
+                  {/* Live sources */}
+                  {[
+                    {
+                      id: "meta" as const,
+                      label: "Metadata",
+                      sub: "Catalogue record — title, place, date, description",
+                    },
+                    {
+                      id: "ocr" as const,
+                      label: "OCR",
+                      sub: "Text extracted from card images via Tesseract",
+                    },
+                  ].map(({ id, label, sub }) => {
+                    const checked = searchMode === id || searchMode === "both";
+                    return (
+                      <label
+                        key={id}
+                        className="flex items-start gap-2.5 cursor-pointer group"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            const otherChecked =
+                              id === "meta"
+                                ? searchMode === "ocr" || searchMode === "both"
+                                : searchMode === "meta" ||
+                                  searchMode === "both";
+                            const nextMode = !checked
+                              ? otherChecked
+                                ? "both"
+                                : id
+                              : otherChecked
+                                ? id === "meta"
+                                  ? "ocr"
+                                  : "meta"
+                                : "meta";
+                            setSearchMode(nextMode);
+                            if (allResults.length) setFiltersDirty(true);
+                          }}
+                          className="mt-0.5 h-3.5 w-3.5 accent-primary cursor-pointer"
+                        />
+                        <span className="space-y-0.5">
+                          <span className="text-xs font-medium group-hover:text-foreground transition-colors block">
+                            {label}
+                          </span>
+                          <span className="text-xs text-muted-foreground block">
+                            {sub}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+
+                  {/* Coming-soon sources */}
+                  {[
+                    {
+                      label: "CLIP",
+                      sub: "Visual similarity — matches card layout, era, and style from images",
+                    },
+                    {
+                      label: "Vision LLM",
+                      sub: "llama3.2-vision describes each card in prose; highest quality but slow to precompute",
+                    },
+                  ].map(({ label, sub }) => (
+                    <label
+                      key={label}
+                      className="flex items-start gap-2.5 opacity-50 cursor-not-allowed"
+                    >
+                      <input
+                        type="checkbox"
+                        disabled
+                        checked={false}
+                        readOnly
+                        className="mt-0.5 h-3.5 w-3.5 cursor-not-allowed"
+                      />
+                      <span className="space-y-0.5">
+                        <span className="text-xs font-medium flex items-center gap-1.5">
+                          {label}
+                          <span className="text-[10px] border border-border rounded px-1 py-px text-muted-foreground font-normal">
+                            coming soon
+                          </span>
+                        </span>
+                        <span className="text-xs text-muted-foreground block">
+                          {sub}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+
+                  {searchMode !== "meta" &&
+                    activeMode === "meta" &&
+                    allResults.length > 0 && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        OCR index not built yet — fell back to metadata only.
+                      </p>
+                    )}
+                </div>
+
+                {/* 2 — Smart Parse */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium">Smart Parse</span>
+                    <Tip text="Before searching, sends your query to a local LLM which extracts place and year, then rephrases the remaining semantic part for better recall. Adds ~1–2 s per search. Leave off for direct keyword or phrase searches." />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSmartParse((v) => !v);
+                      if (allResults.length) setFiltersDirty(true);
+                    }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      smartParse ? "bg-primary" : "bg-input"
+                    }`}
+                    role="switch"
+                    aria-checked={smartParse}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                        smartParse ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* 3 — Narrow by place or date */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium">
+                      Narrow by place or date
+                    </span>
+                    <Tip text="Hard filters applied server-side before ranking. Place is a case-insensitive substring match — e.g. 'Hamburg' matches 'Hamburg-Amerika Linie'. Year filters by the printed date on the menu card and are both inclusive." />
+                  </div>
                   <Input
                     id="filter-place"
                     value={place}
@@ -319,61 +451,107 @@ export default function Home() {
                       setPlace(e.target.value);
                       if (allResults.length) setFiltersDirty(true);
                     }}
-                    placeholder="e.g. Berlin, Hamburg, Norddeutscher Lloyd"
+                    placeholder="Place — e.g. Berlin, Hamburg, Norddeutscher Lloyd"
                     className="h-9 text-sm bg-background"
                   />
-                </div>
-
-                {/* Year range */}
-                <div className="space-y-1">
-                  <label className="text-xs font-medium">Year range</label>
                   <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      value={yearFrom}
-                      onChange={(e) => {
-                        setYearFrom(e.target.value);
-                        if (allResults.length) setFiltersDirty(true);
-                      }}
-                      placeholder="From"
-                      min={1700}
-                      max={1950}
-                      className="h-9 text-sm w-28 bg-background"
-                    />
-                    <span className="text-muted-foreground text-sm">to</span>
-                    <Input
-                      type="number"
-                      value={yearTo}
-                      onChange={(e) => {
-                        setYearTo(e.target.value);
-                        if (allResults.length) setFiltersDirty(true);
-                      }}
-                      placeholder="To"
-                      min={1700}
-                      max={1950}
-                      className="h-9 text-sm w-28 bg-background"
-                    />
+                    <div className="relative flex-1">
+                      <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground select-none">
+                        &ge;
+                      </span>
+                      <Input
+                        type="number"
+                        value={yearFrom}
+                        onChange={(e) => {
+                          setYearFrom(e.target.value);
+                          if (allResults.length) setFiltersDirty(true);
+                        }}
+                        placeholder="1880"
+                        min={1700}
+                        max={1950}
+                        className="h-9 text-sm pl-6 bg-background"
+                      />
+                    </div>
+                    <span className="text-muted-foreground text-xs shrink-0">
+                      –
+                    </span>
+                    <div className="relative flex-1">
+                      <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground select-none">
+                        &le;
+                      </span>
+                      <Input
+                        type="number"
+                        value={yearTo}
+                        onChange={(e) => {
+                          setYearTo(e.target.value);
+                          if (allResults.length) setFiltersDirty(true);
+                        }}
+                        placeholder="1920"
+                        min={1700}
+                        max={1950}
+                        className="h-9 text-sm pl-6 bg-background"
+                      />
+                    </div>
                   </div>
+                  {hasFilters && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearFilters}
+                      className="text-muted-foreground h-7 px-2 text-xs"
+                    >
+                      Clear place &amp; date
+                    </Button>
+                  )}
                 </div>
 
-                {hasFilters && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearFilters}
-                    className="text-muted-foreground h-7 px-2 text-xs"
-                  >
-                    Clear filters
-                  </Button>
-                )}
+                {/* 4 — Min relevance */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium">Min relevance</span>
+                    <Tip text="Hides results whose similarity score falls below this threshold. Applied instantly in the browser — no re-search needed. 0% shows everything returned; raise it to surface only close matches." />
+                    <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                      {minScore}%
+                    </span>
+                  </div>
+                  <Slider
+                    min={0}
+                    max={80}
+                    step={5}
+                    value={[minScore]}
+                    onValueChange={([v]) => {
+                      setMinScore(v);
+                      setPage(1);
+                      setAnswer("");
+                    }}
+                    disabled={isFacetOnly}
+                  />
+                  {isFacetOnly && (
+                    <p className="text-xs text-muted-foreground">
+                      Not applicable for place/date-only searches.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </div>
-          {filtersDirty && (
-            <p className="text-xs text-primary">
-              Filters changed — click Search to update results.
-            </p>
+
+          {/* Status row — parsed-query chip + dirty notice */}
+          {(parsedQuery || filtersDirty) && (
+            <div className="flex items-center gap-3 flex-wrap">
+              {parsedQuery && (
+                <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/15 px-2 py-0.5 text-xs text-primary font-medium">
+                  searched as:{" "}
+                  <span className="italic font-normal">{parsedQuery}</span>
+                </span>
+              )}
+              {filtersDirty && (
+                <p className="text-xs text-primary">
+                  Settings changed — click Search to update.
+                </p>
+              )}
+            </div>
           )}
         </form>
 
@@ -388,7 +566,7 @@ export default function Home() {
         )}
 
         {/* Separator — always present so layout doesn't shift */}
-        <hr className="border-border" />
+        <hr className="border-border mt-2" />
 
         {/* Error */}
         {error && <p className="text-sm text-destructive">{error}</p>}
@@ -401,40 +579,45 @@ export default function Home() {
           </div>
         )}
 
-        {/* Empty state — shown before any search */}
-        {!loading && allResults.length === 0 && !error && (
+        {/* Empty state — before any search */}
+        {!loading && !hasSearched && allResults.length === 0 && !error && (
           <p className="text-sm text-muted-foreground py-4">
             Enter a query above to search the collection.
           </p>
         )}
 
+        {/* Empty state — search ran but nothing matched */}
+        {!loading && hasSearched && allResults.length === 0 && !error && (
+          <div className="py-6 space-y-1">
+            <p className="text-sm font-medium">No results found.</p>
+            <p className="text-xs text-muted-foreground">
+              Try a broader query
+              {hasFilters ? ", or remove the place / date filters" : ""}.
+              {minScore > 0 &&
+                " Lowering Min relevance in Advanced settings may also reveal more matches."}
+            </p>
+          </div>
+        )}
+
+        {/* Empty state — results exist but all filtered out client-side */}
+        {!loading &&
+          hasSearched &&
+          allResults.length > 0 &&
+          filtered.length === 0 &&
+          !error && (
+            <div className="py-6 space-y-1">
+              <p className="text-sm font-medium">
+                All results hidden by Min relevance filter.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Lower the threshold in Advanced settings to see more.
+              </p>
+            </div>
+          )}
+
         {/* Results */}
         {!loading && allResults.length > 0 && (
           <div className="space-y-4">
-            {/* Relevance slider — client-side, instant, only for semantic searches */}
-            {!isFacetOnly && (
-              <div className="flex items-center gap-4">
-                <span className="text-xs text-muted-foreground shrink-0">
-                  Min relevance
-                </span>
-                <Slider
-                  min={0}
-                  max={80}
-                  step={5}
-                  value={[minScore]}
-                  onValueChange={([v]) => {
-                    setMinScore(v);
-                    setPage(1);
-                    setAnswer("");
-                  }}
-                  className="flex-1"
-                />
-                <span className="text-xs text-muted-foreground tabular-nums w-8 text-right">
-                  {minScore}%
-                </span>
-              </div>
-            )}
-
             {/* Summary row */}
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">
