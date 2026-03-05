@@ -71,6 +71,7 @@ export default function Home() {
   // Archivist (AI interpretation)
   const [answer, setAnswer] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [answerOpen, setAnswerOpen] = useState(true);
 
   // Smart Parse mode — LLM decomposes the query before searching
   const [smartParse, setSmartParse] = useState(false);
@@ -80,6 +81,8 @@ export default function Home() {
 
   // Search mode: "meta" | "ocr" | "both"
   const [searchMode, setSearchMode] = useState<"meta" | "ocr" | "both">("meta");
+  // Blend weight for "both" mode: 0 = all OCR, 100 = all metadata (maps to meta_weight 0–1)
+  const [metaWeight, setMetaWeight] = useState(50);
   // Reflects what mode the API actually used (may fall back to "meta" if OCR index isn't built)
   const [activeMode, setActiveMode] = useState("meta");
   // True once at least one search has completed (distinguishes pre-search from zero-results)
@@ -153,6 +156,7 @@ export default function Home() {
         query: searchQuery,
         search_mode: derivedMode,
       };
+      if (derivedMode === "both") body.meta_weight = metaWeight / 100;
       if (parsedPlace) body.place = parsedPlace;
       if (parsedYearFrom) body.year_from = Number(parsedYearFrom);
       if (parsedYearTo) body.year_to = Number(parsedYearTo);
@@ -218,6 +222,7 @@ export default function Home() {
       });
       const data = await res.json();
       setAnswer(data.answer);
+      setAnswerOpen(true);
     } catch {
       setAnswer("Generation failed — is Ollama running?");
     } finally {
@@ -244,7 +249,7 @@ export default function Home() {
             Search the collection
           </h1>
           <p className="text-sm text-muted-foreground">
-            AI-powered discovery across 2,403 historical menu cards ·
+            AI-powered discovery across 2,403 historical menus ·
             Staatsbibliothek zu Berlin
           </p>
         </div>
@@ -289,7 +294,8 @@ export default function Home() {
               {(searchMode !== "meta" ||
                 smartParse ||
                 hasFilters ||
-                minScore > 0) && (
+                minScore > 0 ||
+                (searchMode === "both" && metaWeight !== 50)) && (
                 <span
                   className="rounded-full bg-primary w-1.5 h-1.5 inline-block"
                   aria-label="non-default settings active"
@@ -401,13 +407,45 @@ export default function Home() {
                     </label>
                   ))}
 
-                  {searchMode !== "meta" &&
+                  {!filtersDirty &&
+                    searchMode !== "meta" &&
                     activeMode === "meta" &&
                     allResults.length > 0 && (
                       <p className="text-xs text-amber-600 dark:text-amber-400">
                         OCR index not built yet — fell back to metadata only.
                       </p>
                     )}
+
+                  {/* Blend slider — only when both sources are active */}
+                  {searchMode === "both" && (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium">Index blend</span>
+                        <Tip text="Controls how much each index contributes to the final score. At 50% both contribute equally. Slide left to weight OCR higher (good for food/dish queries); slide right to weight catalogue metadata higher (good for place/date queries). A card that scores well in both will naturally rank above one that only scores well in one." />
+                        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                          {metaWeight === 50
+                            ? "50 / 50"
+                            : metaWeight < 50
+                              ? `OCR  +${50 - metaWeight}%`
+                              : `Meta +${metaWeight - 50}%`}
+                        </span>
+                      </div>
+                      <Slider
+                        min={0}
+                        max={100}
+                        step={10}
+                        value={[metaWeight]}
+                        onValueChange={([v]) => {
+                          setMetaWeight(v);
+                          if (allResults.length) setFiltersDirty(true);
+                        }}
+                      />
+                      <div className="flex justify-between text-[10px] text-muted-foreground">
+                        <span>← OCR</span>
+                        <span>Metadata →</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 2 — Smart Parse */}
@@ -632,9 +670,9 @@ export default function Home() {
             <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-3">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium">Ask the Archivist</p>
+                  <p className="text-sm font-medium">Ask the A(I)rchivist</p>
                   <p className="text-xs text-muted-foreground">
-                    AI summary of the {pageResults.length} cards on this page
+                    AI summary of the {pageResults.length} menus on this page
                   </p>
                 </div>
                 <Button
@@ -655,9 +693,25 @@ export default function Home() {
                 </Button>
               </div>
               {answer && (
-                <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap border-t border-border pt-3">
-                  {answer}
-                </p>
+                <div className="border-t border-border pt-3 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setAnswerOpen((v) => !v)}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {answerOpen ? (
+                      <ChevronUp className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                    {answerOpen ? "Hide" : "Show"}
+                  </button>
+                  {answerOpen && (
+                    <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap">
+                      {answer}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
 

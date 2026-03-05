@@ -13,7 +13,7 @@ interface Message {
 }
 
 const GREETING =
-  "I'm ready to answer questions about this menu card. What would you like to know?";
+  "I'm ready to answer questions about this menu. What would you like to know?";
 
 export default function CardChat({ ppn }: { ppn: string }) {
   const [messages, setMessages] = useState<Message[]>([
@@ -71,8 +71,8 @@ export default function CardChat({ ppn }: { ppn: string }) {
   return (
     <div className="rounded-lg border border-border bg-muted/40 flex flex-col">
       <div className="px-5 pt-4 pb-2 border-b border-border">
-        <p className="text-sm font-medium">Ask the Archivist</p>
-        <p className="text-xs text-muted-foreground">Chat about this card</p>
+        <p className="text-sm font-medium">Ask the A(I)rchivist</p>
+        <p className="text-xs text-muted-foreground">Chat about this menu</p>
       </div>
 
       {/* Message list */}

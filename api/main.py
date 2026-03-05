@@ -31,6 +31,7 @@ INDEX_PATH = ROOT / "data" / "index.faiss"
 STORE_PATH = ROOT / "data" / "metadata_store.json"
 INDEX_OCR_PATH = ROOT / "data" / "index_ocr.faiss"
 STORE_OCR_PATH = ROOT / "data" / "metadata_store_ocr.json"
+OCR_STORE_PATH = ROOT / "data" / "ocr_store.json"
 IMAGES_PATH = ROOT / "data" / "MenuCardsDataset"
 
 # In Docker, Ollama runs as a sidecar container named "ollama".
@@ -65,6 +66,15 @@ else:
     print(
         "OCR index not found — run build_index_v2.py to enable 'ocr' and 'both' modes"
     )
+
+# OCR text store — {ppn: ocr_text}; used to enrich Archivist context
+if OCR_STORE_PATH.exists():
+    with open(OCR_STORE_PATH, encoding="utf-8") as f:
+        ocr_lookup: dict[str, str] = json.load(f)
+    print(f"OCR text store ready — {len(ocr_lookup)} records")
+else:
+    ocr_lookup = {}
+    print("OCR text store not found — Archivist will use metadata only")
 
 print("Loading embedding model …")
 model = SentenceTransformer(MODEL_NAME)
@@ -110,6 +120,9 @@ class SearchRequest(BaseModel):
     year_from: Optional[int] = None  # inclusive
     year_to: Optional[int] = None  # inclusive
     search_mode: str = "meta"  # "meta" | "ocr" | "both"
+    meta_weight: float = (
+        0.5  # 0–1; only used when search_mode="both". 0 = all OCR, 1 = all metadata
+    )
 
 
 class GenerateRequest(BaseModel):
@@ -130,6 +143,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     ppn: str
+    messages: list[ChatMessage] = []
 
 
 class ParseRequest(BaseModel):
@@ -201,6 +215,8 @@ def search(req: SearchRequest):
             "iiif_manifest_url",
             f"https://content.staatsbibliothek-berlin.de/dc/{item['ppn']}/manifest",
         )
+        if item["ppn"] in ocr_lookup:
+            item["ocr_text"] = ocr_lookup[item["ppn"]]
         return item
 
     def _faiss_scores(idx, store) -> dict[str, float]:
@@ -238,13 +254,14 @@ def search(req: SearchRequest):
             if ppn in ppn_to_meta
         ]
 
-    else:  # "both" — late fusion: max score wins
+    else:  # "both" — weighted blend: α·meta + (1-α)·ocr
         meta_scores = _faiss_scores(index, metadata_store)
         ocr_scores = _faiss_scores(index_ocr, metadata_store_ocr)
         ppn_to_meta = {r["ppn"]: r for r in metadata_store}
         all_ppns = set(meta_scores) | set(ocr_scores)
+        w = max(0.0, min(1.0, req.meta_weight))  # clamp to [0, 1]
         fused = {
-            ppn: max(meta_scores.get(ppn, 0.0), ocr_scores.get(ppn, 0.0))
+            ppn: w * meta_scores.get(ppn, 0.0) + (1.0 - w) * ocr_scores.get(ppn, 0.0)
             for ppn in all_ppns
         }
         results = [
@@ -297,6 +314,10 @@ async def generate(req: GenerateRequest):
             lines.append(f"  Place:       {r['place']}")
         if r.get("description"):
             lines.append(f"  Description: {r['description']}")
+        if r.get("ocr_text"):
+            # Truncate to keep prompt size reasonable; ~600 chars ≈ ~150 tokens
+            snippet = r["ocr_text"][:600].strip()
+            lines.append(f"  Menu text:   {snippet}")
         context_lines.append("\n".join(lines))
 
     context = "\n\n".join(context_lines)
@@ -305,32 +326,31 @@ async def generate(req: GenerateRequest):
         "You are a knowledgeable archivist helping researchers explore a collection "
         "of historical menu cards from the Staatsbibliothek zu Berlin (SBB), "
         "mostly dating from 1880–1913, though the collection spans 1700–1920.\n\n"
-        "Each catalogue record has four labelled fields:\n"
+        "Each catalogue record has up to five labelled fields:\n"
         "  Title       — the short title of the card\n"
         "  Date        — year or date range\n"
         "  Place       — the city, ship company, hotel, or institution that issued the card\n"
         "  Description — a librarian's PHYSICAL description of the card object (paper, printing, size, condition). "
-        "It does NOT contain a transcription of the menu text itself.\n\n"
+        "It does NOT contain a transcription of the menu text itself.\n"
+        "  Menu text   — OCR-extracted text from the card image (may contain OCR errors). "
+        "This is the actual printed menu content — dishes, courses, prices etc.\n\n"
         "CRITICAL: The Description field describes the physical card, not the food on the menu. "
-        "Do NOT invent, infer, or guess specific dishes, ingredients, or cuisines that are not explicitly stated in the fields above. "
-        "Only report what is literally written in the catalogue record.\n\n"
+        "Only the Menu text field contains actual food content. "
+        "Do NOT invent or guess dishes that are not explicitly present in the fields above.\n\n"
         'A researcher has asked: "{query}"\n\n'
         "You are viewing page {page} of {total_pages} of the search results "
         "({start_index}–{end_index} of {total_results} matching records).\n\n"
         "Based on these catalogue records from the collection:\n\n"
         "{context}\n\n"
         "Instructions:\n"
-        "- Provide a helpful, concise answer in English.\n"
-        "- Reference specific cards by their number [1], [2] etc. where relevant.\n"
+        "- Begin with 2–3 sentences that directly address the researcher's query: summarise what kinds of records were found, what themes or patterns connect them to what was asked, and any noteworthy highlights.\n"
+        "- Then cover each record individually. For each: state the date, place/occasion, and describe the food visible in the Menu text field. Translate or interpret French/German dish names where helpful. Reference cards by number [1], [2] etc.\n"
         "- Treat every card as a distinct item — do not say one card 'repeats' or 'is the same as' another, even if they look similar.\n"
-        "- Only describe what is explicitly written in the catalogue fields. Do NOT invent dish names, ingredients, or cuisine types that are not literally present in the record.\n"
-        "- If a query asks about specific food content (e.g. dishes on the menu) that is not in the Description field, say that the catalogue records describe the physical cards only and do not transcribe the menu text.\n"
-        "- If the researcher asks about a location, check the Place field of every record carefully.\n"
-        "- These records were retrieved by semantic similarity search. Your ONLY job is to describe what they contain. "
-        "NEVER use phrases like: 'no records match', 'none of the records contain', 'no exact match', "
-        "'I couldn't find', 'does not appear to contain', 'does not explicitly contain', 'does not match the query', "
-        "or anything implying the search failed or found nothing. Just describe each record factually — date, place, occasion.\n"
-        "- Cover all the records shown, not just a few you judge to be strong matches.\n"
+        "- These records were retrieved by semantic similarity — they are all relevant. Do NOT comment on whether the query terms appear literally in the text. Do NOT use any phrase about absence, missing content, or failed matches.\n"
+        "- Only describe what is written in the fields. Do NOT invent dish names or details not present in the record.\n"
+        "- If the Menu text field is garbled OCR, briefly note it is illegible rather than quoting the noise.\n"
+        "- If no Menu text field is present for a card, note briefly that OCR was not available.\n"
+        "- Cover all the records shown.\n"
         "- Do NOT apply any date range filter of your own — report the dates as they appear in the records.\n"
         "- Do NOT suggest external archives, other collections, or resources outside this catalogue.\n"
         "- Do NOT refer to cards from previous pages that are not in the context above.\n"
@@ -375,7 +395,7 @@ async def chat(req: ChatRequest):
     if not card:
         raise HTTPException(status_code=404, detail=f"Card {req.ppn!r} not found")
 
-    # Build a system prompt grounded in this card's metadata only
+    # Build a system prompt grounded in this card's metadata + OCR text
     field_lines = []
     for label, key in [
         ("Title", "subtitle"),
@@ -385,13 +405,20 @@ async def chat(req: ChatRequest):
     ]:
         if card.get(key):
             field_lines.append(f"  {label}: {card[key]}")
+    ocr_raw = ocr_lookup.get(req.ppn, "")
+    if ocr_raw:
+        field_lines.append(
+            f"  Menu text (OCR, may contain errors): {ocr_raw[:1200].strip()}"
+        )
     card_context = "\n".join(field_lines)
 
     system = (
         "You are a knowledgeable archivist at the Staatsbibliothek zu Berlin. "
         "A researcher is viewing a single historical menu card from the collection. "
-        "Answer their questions using only the information in the catalogue record below. "
-        "Be concise, helpful, and stay in the role of an archivist. "
+        "Answer their questions using the information in the catalogue record below. "
+        "The 'Menu text' field is raw OCR output from the card image and will contain errors — "
+        "report only words you are confident are correct; do not guess at garbled text. "
+        "Be concise and factual. Do not use informal language, humour, or filler phrases. "
         "If a question cannot be answered from the record, say so briefly.\n\n"
         f"Catalogue record:\n{card_context}"
     )
@@ -446,9 +473,9 @@ async def parse_query(req: ParseRequest):
         'Input: "elegant dinner at a Berlin hotel in the 1890s"\n'
         'Output: {"semantic_query": "elegant dinner hotel", "place": "Berlin", "year_from": 1890, "year_to": 1899, "caveat": null}\n\n'
         'Input: "find me vegetarian dishes on the menu"\n'
-        'Output: {"semantic_query": "vegetarian", "place": null, "year_from": null, "year_to": null, "caveat": "The catalogue describes the physical cards only and does not transcribe menu text, so specific dishes cannot be searched."}\n\n'
+        'Output: {"semantic_query": "vegetarian", "place": null, "year_from": null, "year_to": null, "caveat": "Tip: switch the search index to OCR or Both in Advanced settings — OCR text from card images may contain dish names."}\n\n'
         'Input: "menus with Polish food"\n'
-        'Output: {"semantic_query": "Polish", "place": null, "year_from": null, "year_to": null, "caveat": "The catalogue does not transcribe menu text, so specific cuisines or dishes cannot be searched."}\n\n'
+        'Output: {"semantic_query": "Polish food", "place": null, "year_from": null, "year_to": null, "caveat": "Tip: switch the search index to OCR or Both in Advanced settings — OCR text from card images may contain dish and cuisine names."}\n\n'
         'Input: "Hohenzollern yacht imperial dinner"\n'
         'Output: {"semantic_query": "Hohenzollern yacht imperial dinner", "place": null, "year_from": null, "year_to": null, "caveat": null}\n\n'
         f'Input: "{req.query}"\n'
