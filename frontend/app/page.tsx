@@ -48,7 +48,8 @@ export default function Home() {
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
-    if (!query.trim()) return;
+    const hasFilter = selectedPlace || yearFrom !== "" || yearTo !== "";
+    if (!query.trim() && !hasFilter) return;
     setLoading(true);
     setError("");
     setAnswer("");
@@ -76,11 +77,26 @@ export default function Home() {
     if (!results.length) return;
     setGenerating(true);
     setAnswer("");
+
+    // If the user did a facet-only browse (no query), synthesise a natural
+    // language description from the active filters so the LLM has something
+    // meaningful to work with.
+    let effectiveQuery = query.trim();
+    if (!effectiveQuery) {
+      const parts: string[] = [];
+      if (selectedPlace) parts.push(`place: ${selectedPlace}`);
+      if (yearFrom !== "" && yearTo !== "")
+        parts.push(`years ${yearFrom}–${yearTo}`);
+      else if (yearFrom !== "") parts.push(`from ${yearFrom} onwards`);
+      else if (yearTo !== "") parts.push(`up to ${yearTo}`);
+      effectiveQuery = `Summarise the menu cards from this browse: ${parts.join(", ")}`;
+    }
+
     try {
       const res = await fetch(`${API}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, results }),
+        body: JSON.stringify({ query: effectiveQuery, results }),
       });
       const data = await res.json();
       setAnswer(data.answer);
@@ -112,7 +128,13 @@ export default function Home() {
             />
             <button
               type="submit"
-              disabled={loading}
+              disabled={
+                loading ||
+                (!query.trim() &&
+                  !selectedPlace &&
+                  yearFrom === "" &&
+                  yearTo === "")
+              }
               className="bg-stone-800 text-white px-6 py-3 rounded-lg font-medium hover:bg-stone-700 disabled:opacity-50 transition"
             >
               {loading ? "Searching..." : "Search"}

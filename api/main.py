@@ -38,6 +38,10 @@ MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 # Below this the card is likely noise, not a real match.
 MIN_SCORE = 0.30
 
+# Set to True to serve images from the local MenuCardsDataset folder (fast, no network).
+# Set to False to use IIIF URLs from the SBB server (no local data needed — good for deployment).
+USE_LOCAL_IMAGES = True
+
 # ── Startup: load index + metadata ────────────────────────────────────────────
 print("Loading FAISS index …")
 index = faiss.read_index(str(INDEX_PATH))
@@ -109,40 +113,54 @@ def search(req: SearchRequest):
     Semantic search + optional metadata post-filter.
 
     Strategy:
-    - Embed the query and retrieve top 50 candidates from FAISS
-    - Apply hard filters (place substring match, year range)
-    - Return top_k results after filtering
+    - If query is blank but filters are set: skip FAISS, scan metadata directly
+      and return all matching records ordered by date (facet-only browse mode).
+    - Otherwise: embed the query, retrieve candidates from FAISS, then filter.
     """
-    if not req.query.strip():
-        raise HTTPException(status_code=400, detail="query must not be empty")
+    has_query = bool(req.query.strip())
+    has_filter = bool(req.place or req.year_from or req.year_to)
 
-    # 1. Embed query
-    vec = model.encode(
-        [req.query],
-        normalize_embeddings=True,
-        convert_to_numpy=True,
-    ).astype(np.float32)
+    if not has_query and not has_filter:
+        raise HTTPException(
+            status_code=400, detail="Provide a search query or at least one filter."
+        )
 
-    # 2. FAISS: retrieve enough candidates so filters have room to work.
-    # With only 2,403 records, searching all of them is instant.
-    candidates = (
-        index.ntotal
-        if (req.place or req.year_from or req.year_to)
-        else min(50, index.ntotal)
-    )
-    scores, indices = index.search(vec, candidates)
+    def _make_item(r: dict, score: float) -> dict:
+        item = r.copy()
+        item["score"] = score
+        item["local_image_url"] = (
+            f"/images/{item['ppn']}/00000001.jpg"
+            if USE_LOCAL_IMAGES
+            else item["iiif_image_url"]
+        )
+        return item
 
-    # 3. Build result list with metadata
-    results = []
-    for score, idx in zip(scores[0], indices[0]):
-        if idx < 0:
-            continue
-        item = metadata_store[idx].copy()
-        item["score"] = float(score)
-        item["local_image_url"] = f"/images/{item['ppn']}/00000001.jpg"
-        results.append(item)
+    # ── Facet-only path (no query) ────────────────────────────────────────────
+    if not has_query:
+        results = [_make_item(r, 0.0) for r in metadata_store]
 
-    # 4. Apply filters
+    # ── Semantic search path ──────────────────────────────────────────────────
+    else:
+        # 1. Embed query
+        vec = model.encode(
+            [req.query],
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+        ).astype(np.float32)
+
+        # 2. FAISS: retrieve enough candidates so filters have room to work.
+        # With only 2,403 records, searching all of them is instant.
+        candidates = index.ntotal if has_filter else min(50, index.ntotal)
+        scores, indices = index.search(vec, candidates)
+
+        # 3. Build result list with metadata
+        results = []
+        for score, idx in zip(scores[0], indices[0]):
+            if idx < 0:
+                continue
+            results.append(_make_item(metadata_store[idx], float(score)))
+
+    # ── Apply filters (both paths) ────────────────────────────────────────────
     if req.place:
         needle = req.place.lower()
         results = [r for r in results if needle in r.get("place", "").lower()]
@@ -160,11 +178,16 @@ def search(req: SearchRequest):
             filtered.append(r)
         results = filtered
 
-    # 5. Drop results below the minimum relevance threshold
-    # (skip threshold when a place/year filter is active — the filter already
-    # constrains the set, and the score reflects query-vs-card not place match)
-    if not (req.place or req.year_from or req.year_to):
+    # ── Score threshold (semantic path only, no filter active) ───────────────
+    # Skip when filters are active — the filter already constrains the set,
+    # and the score reflects query-vs-prose not place/date relevance.
+    # Skip entirely in facet-only mode (score is 0.0 placeholder).
+    if has_query and not has_filter:
         results = [r for r in results if r["score"] >= MIN_SCORE]
+
+    # In facet-only mode, sort by date descending (newest first) for a sensible default.
+    if not has_query:
+        results.sort(key=lambda r: _extract_year(r.get("date", "")) or 0, reverse=True)
 
     return {"results": results[: req.top_k], "total_candidates": len(results)}
 
@@ -210,6 +233,8 @@ async def generate(req: GenerateRequest):
         "- Provide a helpful, concise answer in English.\n"
         "- Reference specific cards by their number [1], [2] etc. where relevant.\n"
         "- If the researcher asks about a location, check the Place field of every record carefully.\n"
+        "- The records shown ARE the matching results — describe what they contain. Do not say there are no matches.\n"
+        "- Do NOT apply any date range filter of your own — report the dates as they appear in the records.\n"
         "- Do NOT suggest external archives, other collections, or resources outside this catalogue.\n"
         "- If the records are weak matches or do not answer the question, say so briefly and stop."
     ).format(query=req.query, context=context)

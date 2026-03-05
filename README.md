@@ -4,13 +4,13 @@ Semantic search over 2,403 historical menu cards from the [Staatsbibliothek zu B
 
 ## Stack
 
-| Layer | Technology |
-|---|---|
-| Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (384-dim, multilingual) |
-| Vector index | FAISS `IndexFlatIP` (cosine similarity via unit normalisation) |
-| API | FastAPI + uvicorn |
-| LLM archivist | Ollama `llama3.2` (local, no API key needed) |
-| Frontend | Next.js 15 + Tailwind CSS |
+| Layer         | Technology                                                      |
+| ------------- | --------------------------------------------------------------- |
+| Embeddings    | `paraphrase-multilingual-MiniLM-L12-v2` (384-dim, multilingual) |
+| Vector index  | FAISS `IndexFlatIP` (cosine similarity via unit normalisation)  |
+| API           | FastAPI + uvicorn                                               |
+| LLM archivist | Ollama `llama3.2` (local, no API key needed)                    |
+| Frontend      | Next.js 15 + Tailwind CSS                                       |
 
 ## Project structure
 
