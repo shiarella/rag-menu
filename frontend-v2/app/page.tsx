@@ -163,7 +163,8 @@ export default function Home() {
             Search the collection
           </h1>
           <p className="text-sm text-muted-foreground">
-            2,403 historical menu cards from the Staatsbibliothek zu Berlin
+            AI-powered discovery across 2,403 historical menu cards ·
+            Staatsbibliothek zu Berlin
           </p>
         </div>
 
@@ -182,7 +183,7 @@ export default function Home() {
             <Button
               type="submit"
               disabled={loading || (!query.trim() && !hasFilters)}
-              className={`h-12 px-6 transition-all ${filtersDirty ? "ring-2 ring-primary ring-offset-2" : ""}`}
+              className={`h-12 w-28 transition-all ${filtersDirty ? "ring-2 ring-primary ring-offset-2" : ""}`}
             >
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -328,6 +329,7 @@ export default function Home() {
                   onValueChange={([v]) => {
                     setMinScore(v);
                     setPage(1);
+                    setAnswer("");
                   }}
                   className="flex-1"
                 />
@@ -351,7 +353,7 @@ export default function Home() {
             <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-3">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium">Ask the archivist</p>
+                  <p className="text-sm font-medium">Ask the Archivist</p>
                   <p className="text-xs text-muted-foreground">
                     AI summary of the {pageResults.length} cards on this page
                   </p>
@@ -447,7 +449,10 @@ export default function Home() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  onClick={() => {
+                    setPage((p) => Math.max(1, p - 1));
+                    setAnswer("");
+                  }}
                   disabled={page === 1}
                 >
                   <ChevronLeft className="h-4 w-4" />
@@ -458,7 +463,10 @@ export default function Home() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  onClick={() => {
+                    setPage((p) => Math.min(totalPages, p + 1));
+                    setAnswer("");
+                  }}
                   disabled={page === totalPages}
                 >
                   <ChevronRight className="h-4 w-4" />
