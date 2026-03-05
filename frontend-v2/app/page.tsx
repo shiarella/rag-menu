@@ -53,6 +53,12 @@ export default function Home() {
   const [answer, setAnswer] = useState("");
   const [generating, setGenerating] = useState(false);
 
+  // Smart Parse mode — LLM decomposes the query before searching
+  const [smartParse, setSmartParse] = useState(false);
+  const [caveat, setCaveat] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [parsedQuery, setParsedQuery] = useState(""); // what LLM rewrote the query to
+
   const hasFilters = place || yearFrom || yearTo;
   const isFacetOnly = !query.trim();
 
@@ -72,12 +78,51 @@ export default function Home() {
     setPage(1);
     setFiltersDirty(false);
     setAnswer("");
+    setCaveat("");
+    setParsedQuery("");
+
+    // Smart Parse: ask the LLM to decompose the query before searching
+    let searchQuery = query;
+    let parsedPlace = p;
+    let parsedYearFrom = yf;
+    let parsedYearTo = yt;
+
+    if (smartParse && query.trim()) {
+      setParsing(true);
+      try {
+        const pr = await fetch(`${API}/parse`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        const pd = await pr.json();
+        searchQuery = pd.semantic_query || query;
+        if (pd.semantic_query) setParsedQuery(pd.semantic_query);
+        if (pd.place) {
+          parsedPlace = pd.place;
+          setPlace(pd.place);
+        }
+        if (pd.year_from) {
+          parsedYearFrom = String(pd.year_from);
+          setYearFrom(String(pd.year_from));
+        }
+        if (pd.year_to) {
+          parsedYearTo = String(pd.year_to);
+          setYearTo(String(pd.year_to));
+        }
+        if (pd.caveat) setCaveat(pd.caveat);
+      } catch {
+        // parse failed — fall through with original query
+      } finally {
+        setParsing(false);
+      }
+    }
 
     try {
-      const body: Record<string, unknown> = { query };
-      if (p) body.place = p;
-      if (yf) body.year_from = Number(yf);
-      if (yt) body.year_to = Number(yt);
+      const body: Record<string, unknown> = { query: searchQuery };
+      if (parsedPlace) body.place = parsedPlace;
+      if (parsedYearFrom) body.year_from = Number(parsedYearFrom);
+      if (parsedYearTo) body.year_to = Number(parsedYearTo);
 
       const res = await fetch(`${API}/search`, {
         method: "POST",
@@ -183,15 +228,55 @@ export default function Home() {
             </div>
             <Button
               type="submit"
-              disabled={loading || (!query.trim() && !hasFilters)}
+              disabled={loading || parsing || (!query.trim() && !hasFilters)}
               className={`h-12 w-28 transition-all ${filtersDirty ? "ring-2 ring-primary ring-offset-2" : ""}`}
             >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+              {loading || parsing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {parsing && <span className="ml-1.5 text-xs">Parsing…</span>}
+                </>
               ) : (
                 "Search"
               )}
             </Button>
+          </div>
+
+          {/* Smart Parse toggle */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setSmartParse((v) => !v)}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                smartParse ? "bg-primary" : "bg-input"
+              }`}
+              role="switch"
+              aria-checked={smartParse}
+            >
+              <span
+                className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                  smartParse ? "translate-x-4" : "translate-x-0"
+                }`}
+              />
+            </button>
+            <span
+              className={`text-xs font-medium transition-colors ${
+                smartParse ? "text-foreground" : "text-muted-foreground"
+              }`}
+            >
+              Smart Parse
+            </span>
+            {smartParse && (
+              <span className="text-xs text-muted-foreground">
+                — LLM rewrites your query before searching
+              </span>
+            )}
+            {parsedQuery && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/15 px-2 py-0.5 text-xs text-primary font-medium">
+                searched as:{" "}
+                <span className="italic font-normal">{parsedQuery}</span>
+              </span>
+            )}
           </div>
 
           {/* Advanced filters toggle */}
@@ -291,6 +376,16 @@ export default function Home() {
             </p>
           )}
         </form>
+
+        {/* Smart Parse caveat */}
+        {caveat && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 px-4 py-3">
+            <p className="text-xs text-amber-800 dark:text-amber-300">
+              <span className="font-medium">Note: </span>
+              {caveat}
+            </p>
+          </div>
+        )}
 
         {/* Separator — always present so layout doesn't shift */}
         <hr className="border-border" />

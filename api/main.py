@@ -113,7 +113,10 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     ppn: str
-    messages: list[ChatMessage]
+
+
+class ParseRequest(BaseModel):
+    query: str
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -278,7 +281,10 @@ async def generate(req: GenerateRequest):
         "- Only describe what is explicitly written in the catalogue fields. Do NOT invent dish names, ingredients, or cuisine types that are not literally present in the record.\n"
         "- If a query asks about specific food content (e.g. dishes on the menu) that is not in the Description field, say that the catalogue records describe the physical cards only and do not transcribe the menu text.\n"
         "- If the researcher asks about a location, check the Place field of every record carefully.\n"
-        "- These records were selected and ranked by semantic similarity — trust the ranking. Do not say a record 'does not match'; instead describe what it contains and how it relates to the query.\n"
+        "- These records were retrieved by semantic similarity search. Your ONLY job is to describe what they contain. "
+        "NEVER use phrases like: 'no records match', 'none of the records contain', 'no exact match', "
+        "'I couldn't find', 'does not appear to contain', 'does not explicitly contain', 'does not match the query', "
+        "or anything implying the search failed or found nothing. Just describe each record factually — date, place, occasion.\n"
         "- Cover all the records shown, not just a few you judge to be strong matches.\n"
         "- Do NOT apply any date range filter of your own — report the dates as they appear in the records.\n"
         "- Do NOT suggest external archives, other collections, or resources outside this catalogue.\n"
@@ -366,3 +372,87 @@ async def chat(req: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"reply": reply}
+
+
+@app.post("/parse")
+async def parse_query(req: ParseRequest):
+    """
+    Query decomposition: extracts structured metadata filters (place, year) from
+    a natural-language query, passes the semantic query through mostly unchanged,
+    and adds a caveat if the query asks for something the catalogue cannot answer.
+    """
+    prompt = (
+        "You parse natural language queries into structured search parameters for a catalogue "
+        "of 2,403 historical menu cards (Staatsbibliothek zu Berlin, mostly 1880–1913).\n\n"
+        "Every record in this catalogue IS a menu card — so phrases like 'show me menus', "
+        "'find menus with', 'menus about', 'I want to see', 'search for' are pure boilerplate "
+        "and must be removed from the semantic_query.\n\n"
+        "Catalogue fields: title, place (city/ship/hotel/institution), date. "
+        "IMPORTANT: the catalogue does NOT contain menu text or dish names — "
+        "only physical descriptions of the card objects.\n\n"
+        "Respond with JSON only. No markdown, no explanation.\n\n"
+        "RULE — place must be a PROPER NOUN (city, named ship, named hotel, named institution). "
+        "Generic words like 'ship', 'boat', 'hotel', 'restaurant' are NOT place values.\n\n"
+        "Examples:\n"
+        'Input: "show me menus with ships and boats"\n'
+        'Output: {"semantic_query": "ships and boats", "place": null, "year_from": null, "year_to": null, "caveat": null}\n\n'
+        'Input: "elegant dinner on a ship"\n'
+        'Output: {"semantic_query": "elegant dinner ship", "place": null, "year_from": null, "year_to": null, "caveat": null}\n\n'
+        'Input: "elegant dinner at a Berlin hotel in the 1890s"\n'
+        'Output: {"semantic_query": "elegant dinner hotel", "place": "Berlin", "year_from": 1890, "year_to": 1899, "caveat": null}\n\n'
+        'Input: "find me vegetarian dishes on the menu"\n'
+        'Output: {"semantic_query": "vegetarian", "place": null, "year_from": null, "year_to": null, "caveat": "The catalogue describes the physical cards only and does not transcribe menu text, so specific dishes cannot be searched."}\n\n'
+        'Input: "menus with Polish food"\n'
+        'Output: {"semantic_query": "Polish", "place": null, "year_from": null, "year_to": null, "caveat": "The catalogue does not transcribe menu text, so specific cuisines or dishes cannot be searched."}\n\n'
+        'Input: "Hohenzollern yacht imperial dinner"\n'
+        'Output: {"semantic_query": "Hohenzollern yacht imperial dinner", "place": null, "year_from": null, "year_to": null, "caveat": null}\n\n'
+        f'Input: "{req.query}"\n'
+        "Output:"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                OLLAMA_URL,
+                json={
+                    "model": OLLAMA_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0},
+                },
+            )
+            response.raise_for_status()
+            raw = response.json()["response"].strip()
+
+        # Strip markdown fences if the model wraps them anyway
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        raw = raw.strip()
+
+        parsed = json.loads(raw)
+        return {
+            "semantic_query": parsed.get("semantic_query") or req.query,
+            "place": parsed.get("place") or None,
+            "year_from": parsed.get("year_from") or None,
+            "year_to": parsed.get("year_to") or None,
+            "caveat": parsed.get("caveat") or None,
+        }
+
+    except (json.JSONDecodeError, KeyError):
+        # If parsing fails fall back to the raw query unchanged
+        return {
+            "semantic_query": req.query,
+            "place": None,
+            "year_from": None,
+            "year_to": None,
+            "caveat": None,
+        }
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Ollama is not running. Start it with: ollama serve",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
