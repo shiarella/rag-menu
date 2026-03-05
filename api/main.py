@@ -36,7 +36,7 @@ MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
 # Minimum cosine similarity to include a result (0–1 scale)
 # Below this the card is likely noise, not a real match.
-MIN_SCORE = 0.30
+# No server-side score threshold — the frontend lets users filter by relevance themselves.
 
 # Set to True to serve images from the local MenuCardsDataset folder (fast, no network).
 # Set to False to use IIIF URLs from the SBB server (no local data needed — good for deployment).
@@ -72,7 +72,11 @@ app = FastAPI(title="Menu Card RAG API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -148,10 +152,9 @@ def search(req: SearchRequest):
             convert_to_numpy=True,
         ).astype(np.float32)
 
-        # 2. FAISS: retrieve enough candidates so filters have room to work.
-        # With only 2,403 records, searching all of them is instant.
-        candidates = index.ntotal if has_filter else min(50, index.ntotal)
-        scores, indices = index.search(vec, candidates)
+        # 2. FAISS: search all records — with 2,403 vectors this is instant.
+        # The frontend handles relevance filtering, so we return the full ranking.
+        scores, indices = index.search(vec, index.ntotal)
 
         # 3. Build result list with metadata
         results = []
@@ -178,18 +181,11 @@ def search(req: SearchRequest):
             filtered.append(r)
         results = filtered
 
-    # ── Score threshold (semantic path only, no filter active) ───────────────
-    # Skip when filters are active — the filter already constrains the set,
-    # and the score reflects query-vs-prose not place/date relevance.
-    # Skip entirely in facet-only mode (score is 0.0 placeholder).
-    if has_query and not has_filter:
-        results = [r for r in results if r["score"] >= MIN_SCORE]
-
     # In facet-only mode, sort by date descending (newest first) for a sensible default.
     if not has_query:
         results.sort(key=lambda r: _extract_year(r.get("date", "")) or 0, reverse=True)
 
-    return {"results": results[: req.top_k], "total_candidates": len(results)}
+    return {"results": results, "total_candidates": len(results)}
 
 
 @app.post("/generate")
