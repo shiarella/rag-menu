@@ -728,7 +728,7 @@ export default function Home() {
                   <div className="relative aspect-3/4 bg-muted">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={`${API}${card.local_image_url}`}
+                      src={card.local_image_url.startsWith("http") ? card.local_image_url : `${API}${card.local_image_url}`}
                       alt={card.subtitle || "Menu card"}
                       className="w-full h-full object-cover"
                       onError={(e) => {
