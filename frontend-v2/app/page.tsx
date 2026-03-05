@@ -295,7 +295,7 @@ export default function Home() {
                 smartParse ||
                 hasFilters ||
                 minScore > 0 ||
-                (searchMode === "both" && metaWeight !== 50)) && (
+                metaWeight !== 50) && (
                 <span
                   className="rounded-full bg-primary w-1.5 h-1.5 inline-block"
                   aria-label="non-default settings active"
