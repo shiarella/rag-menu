@@ -8,7 +8,7 @@ services:
       - ollama_data:/root/.ollama # model weights persist across restarts
     # No port exposure — only the api container needs to reach Ollama
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434"]
+      test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 6
