@@ -106,34 +106,6 @@ def _warmup_ollama():
 
 threading.Thread(target=_warmup_ollama, daemon=True).start()
 
-# Warm up Ollama so the first user request doesn't cold-start
-import threading
-
-
-def _warmup_ollama():
-    import time, urllib.request
-
-    for _ in range(12):  # wait up to 60s for Ollama to be reachable
-        try:
-            urllib.request.urlopen(f"{_ollama_host}/api/tags", timeout=5)
-            break
-        except Exception:
-            time.sleep(5)
-    try:
-        import httpx as _httpx
-
-        _httpx.post(
-            OLLAMA_URL,
-            json={"model": OLLAMA_MODEL, "prompt": "hi", "stream": False},
-            timeout=120.0,
-        )
-        print("Ollama warm-up complete")
-    except Exception as e:
-        print(f"Ollama warm-up skipped: {e}")
-
-
-threading.Thread(target=_warmup_ollama, daemon=True).start()
-
 
 # ── Facet pre-computation ─────────────────────────────────────────────────────
 def _extract_year(date_str: str) -> Optional[int]:

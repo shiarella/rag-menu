@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 
 const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 6;
 
 /** Hover tooltip — works reliably where SVG `title` attributes don't. */
 function Tip({ text }: { text: string }) {
